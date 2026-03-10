@@ -64,34 +64,58 @@ async def call_mcp_server(method: str, params: dict) -> Any:
 
 
 # -------------------------------------------------------
-# 3. Python-defined Tools (Core Logic)
+# 3. Generic MCP Tool Executor (with Caching)
 # -------------------------------------------------------
 
-async def get_service_request_id_logic() -> str:
-    """Core logic for generating a service request ID."""
-    logger.info("Executing core logic: get_service_request_id")
+async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
+    """
+    Executes an MCP tool with request-scoped caching.
+    Standardizes response handling to be generic across different tools.
+    """
+    # Create a unique cache key based on tool name and arguments
+    import json
+    cache_key = f"{name}:{json.dumps(arguments, sort_keys=True)}"
+    
+    if cache_key in cache:
+        logger.info(f"Cache HIT for tool: {name}")
+        return cache[cache_key]
+
+    logger.info(f"Cache MISS for tool: {name}. Executing...")
 
     # Call the MCP server
     mcp_result = await call_mcp_server(
         "tools/call",
         {
-            "name": "merakle_demo_get_service_request_id",
-            "arguments": {}
+            "name": name,
+            "arguments": arguments
         }
     )
 
-    # Extract the ID from the MCP result
+    # Standardized response extraction
+    # 1. If MCP returns an error
+    if isinstance(mcp_result, dict) and "error" in mcp_result:
+        return f"Error from tool {name}: {mcp_result['error']}"
+
+    # 2. Try common MCP/Merakle result keys
+    result_data = None
     if isinstance(mcp_result, dict):
-        service_request_id = mcp_result.get("id") or mcp_result.get("output")
-        if service_request_id:
-            logger.info(f"Generated Service Request ID: {service_request_id}")
-            return str(service_request_id)
-        else:
-            logger.error(f"MCP result for get_service_request_id did not contain an ID: {mcp_result}")
-            return "Error: Could not generate a service request ID."
+        # Check for 'content' (standard MCP), then 'id', 'output', 'result', etc.
+        result_data = (
+            mcp_result.get("content") or 
+            mcp_result.get("id") or 
+            mcp_result.get("output") or 
+            mcp_result.get("result") or 
+            mcp_result
+        )
     else:
-        logger.error(f"Unexpected MCP result type: {type(mcp_result)}")
-        return "Error: Could not generate a service request ID."
+        result_data = mcp_result
+
+    # 3. Convert to a clean string for the LLM
+    final_result = str(result_data)
+    
+    # Store in cache and return
+    cache[cache_key] = final_result
+    return final_result
 
 
 # -------------------------------------------------------
@@ -130,7 +154,7 @@ async def run_agent_endpoint(request: AgentRequest):
         )
 
         # -------------------------------------------------------
-        # 5. Register Tools (Python-defined with Caching)
+        # 5. Register Tools (Generic wrappers)
         # -------------------------------------------------------
 
         agno_tools = []
@@ -143,15 +167,12 @@ async def run_agent_endpoint(request: AgentRequest):
                 description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
             )
             async def merakle_demo_get_service_request_id() -> str:
-                """Cached wrapper for service request ID generation."""
-                cache_key = "get_service_request_id"
-                if cache_key in tool_cache:
-                    logger.info("Returning cached Service Request ID")
-                    return tool_cache[cache_key]
-                
-                result = await get_service_request_id_logic()
-                tool_cache[cache_key] = result
-                return result
+                """Generic wrapper for service request ID generation."""
+                return await execute_mcp_tool(
+                    "merakle_demo_get_service_request_id", 
+                    {}, 
+                    tool_cache
+                )
 
             agno_tools = [
                 merakle_demo_get_service_request_id
