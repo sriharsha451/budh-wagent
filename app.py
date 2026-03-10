@@ -190,7 +190,7 @@ async def run_agent_endpoint(request: AgentRequest):
         start_index = 0
 
         if request.chatHistory and request.chatHistory[0].get("role") == "system":
-            chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}
+            chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}\n\n"
 
 "
             start_index = 1
