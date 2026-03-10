@@ -99,21 +99,39 @@ async def run_agent_endpoint(request: AgentRequest):
             markdown=False,
         )
 
-        # Inject chat history into agent memory
-        # logger.info(f"Injecting {len(request.chatHistory)} messages into memory...")
-        # for msg in request.chatHistory[:-1]:
-        #     role = msg.get("role", "user").lower()
-        #     content = msg.get("content", "")
-        #     if role == "user":
-        #         agent.memory.add_user_message(content)
-        #     else:
-        #         agent.memory.add_assistant_message(content)
+        # 5. Prepare Chat History and Prompt
+        chat_history_text = ""
+        
+        # Check if the first message is a system prompt
+        start_index = 0
+        first_msg = request.chatHistory[0] if request.chatHistory else {}
+        if first_msg.get("role", "").lower() == "system":
+            # If system role exists, we can add it to instructions or prepend it
+            # Following your pattern of text-based history:
+            chat_history_text += f"System Instructions: {first_msg.get('content', '')}\n\n"
+            start_index = 1
 
-        # Last user message
-        last_message = request.chatHistory[-1]["content"] if request.chatHistory else "Hello"
+        # Process the rest of the history (except the last message)
+        for msg in request.chatHistory[start_index:-1]:
+            role = msg.get("role", "user").lower()
+            content = msg.get("content", "")
+            if role == "user":
+                chat_history_text += f"User: {content}\n"
+            else:
+                chat_history_text += f"Assistant: {content}\n"
 
-        logger.info(f"Running agent on last user message: {last_message}")
-        response = await agent.arun(last_message)
+        # Construct full prompt with the last user message
+        last_user_content = request.chatHistory[-1]["content"] if request.chatHistory else "Hello"
+        full_prompt = chat_history_text + f"User: {last_user_content}"
+
+        print("\n--- FINAL PROMPT TO AGENT ---")
+        print(full_prompt)
+        print("--- TOOLS ---")
+        print([t.name for t in agent.tools] if agent.tools else "No tools")
+        print("-----------------------------\n")
+
+        logger.info(f"Running agent with full prompt (history + last message)")
+        response = await agent.arun(full_prompt)
 
         # Return structured response
         if isinstance(response.content, WhatsAppResponse):
