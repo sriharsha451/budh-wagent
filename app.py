@@ -1,21 +1,20 @@
 import os
 import httpx
 import uuid
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
-from agno.agent import Agent
+from agno.agent import Agent, Tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
-
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MCP_SERVER_BASE_URLS = ['https://api.merakle.ai/v1/b/mcp/messages']
+MCP_SERVER_URL = 'https://api.merakle.ai/v1/b/mcp/messages'
 
 # 1. Structured Output Schema
 class WhatsAppResponse(BaseModel):
@@ -25,37 +24,50 @@ class WhatsAppResponse(BaseModel):
     saveDataValue: str = Field(..., description="Value for the saved variable")
     waTemplateParams: List[str] = Field(..., description="Parameters for template placeholders")
 
-# 2. MCP Tool Logic (Auto-wrapped by Agno)
-async def call_mcp_server(name: str, arguments: dict) -> Any:
-    """
-    Call the MCP server to execute a specific tool with arguments.
-    
-    Args:
-        name (str): The name of the tool to execute.
-        arguments (dict): The arguments for the tool call as a dictionary.
-    """
-    url = MCP_SERVER_BASE_URLS[0]
+# 2. MCP Bridge Logic
+async def call_mcp_server(method: str, params: dict) -> Any:
+    """Generic JSON-RPC caller for the MCP server."""
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
-        "method": "tools/call",
-        "params": {"name": name, "arguments": arguments}
+        "method": method,
+        "params": params
     }
-    try:
-        print(f"callMCPServer: Executing tool {name}")
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=payload, timeout=30.0)
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(MCP_SERVER_URL, json=payload, timeout=30.0)
             response.raise_for_status()
             data = response.json()
             if "error" in data:
-                logger.error(f"MCP error: {data['error']}")
+                logger.error(f"MCP error in {method}: {data['error']}")
                 return {"error": data["error"].get("message", "Unknown MCP error")}
-            
-            result = data.get("result", {})
-            return result.get("content", []) or result.get("output", [])
-    except Exception as e:
-        logger.exception(f"MCP request failed: {e}")
-        return {"error": str(e)}
+            return data.get("result", {})
+        except Exception as e:
+            logger.exception(f"MCP {method} failed: {e}")
+            return {"error": str(e)}
+
+async def fetch_mcp_tools() -> List[Dict]:
+    """Fetches the list of available tools from the MCP server."""
+    result = await call_mcp_server("tools/list", {})
+    return result.get("tools", [])
+
+def build_agno_tool(mcp_tool_def: Dict) -> Tool:
+    """Dynamically builds an Agno Tool from an MCP tool definition."""
+    tool_name = mcp_tool_def["name"]
+    tool_desc = mcp_tool_def.get("description", "No description provided.")
+
+    async def mcp_executor(**kwargs):
+        # This is the function the agent actually calls
+        logger.info(f"Executing MCP Tool: {tool_name} with args: {kwargs}")
+        result = await call_mcp_server("tools/call", {"name": tool_name, "arguments": kwargs})
+        # Return the content/result to the agent
+        return result
+
+    return Tool(
+        name=tool_name,
+        description=tool_desc,
+        entry_point=mcp_executor
+    )
 
 # 3. FastAPI App
 app = FastAPI()
@@ -71,97 +83,75 @@ class AgentRequest(BaseModel):
 async def run_agent_endpoint(request: AgentRequest):
     try:
         task_id = str(request.taskId)
-        account_id = str(request.accountId)
-        campaign_id = str(request.campaignId)
-        logger.info(f"New Request: Task {task_id} | Account {account_id} | Campaign {campaign_id}")
+        logger.info(f"--- New Request: Task {task_id} ---")
 
-        template_settings = request.templateSettings
-        model_id = template_settings.get("model", "gpt-4o-mini")
-        temperature = template_settings.get("temperature", 0.7)
-        base_system_prompt = template_settings.get("callprompt", "You are a helpful assistant.")
-        enable_tools = template_settings.get("campaign_settings", {}).get("enable_merakle_knowledge", False)
+        # Extract settings
+        ts = request.templateSettings
+        model_id = ts.get("model", "gpt-4o-mini")
+        temperature = ts.get("temperature", 0.7)
+        base_prompt = ts.get("callprompt", "You are a helpful assistant.")
+        enable_tools = ts.get("campaign_settings", {}).get("enable_merakle_knowledge", False)
 
-        logger.info(f"Model: {model_id} | Temperature: {temperature} | Tools Enabled: {enable_tools}")
+        # 4. Build Tools List
+        agno_tools = []
+        if enable_tools:
+            logger.info("Fetching MCP tools...")
+            mcp_tools_defs = await fetch_mcp_tools()
+            for t_def in mcp_tools_defs:
+                agno_tools.append(build_agno_tool(t_def))
+            logger.info(f"Registered {len(agno_tools)} tools from MCP server.")
 
-        # Tools list — functions auto-wrapped by Agno
-        tools = [call_mcp_server] if enable_tools else []
-
-        # Initialize Agno Agent (Using the provided example pattern)
+        # 5. Initialize Agent
         agent = Agent(
             model=OpenAIChat(id=model_id, api_key=OPENAI_API_KEY, temperature=temperature),
             instructions=[
-                base_system_prompt,
+                base_prompt,
                 f"The merakle_call_id for this call is {task_id}.",
-                "Respond naturally to the user."
+                "Respond naturally to the user.",
+                "If a tool fails, inform the user and move on. Do not retry more than once."
             ],
-            tools=tools,
+            tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
+            num_calls=10 # Safety limit
         )
 
-        # 5. Prepare Chat History and Prompt
+        # 6. Format Chat History
         chat_history_text = ""
-        
-        # Check if the first message is a system prompt
         start_index = 0
-        first_msg = request.chatHistory[0] if request.chatHistory else {}
-        if first_msg.get("role", "").lower() == "system":
-            # If system role exists, we can add it to instructions or prepend it
-            # Following your pattern of text-based history:
-            chat_history_text += f"System Instructions: {first_msg.get('content', '')}\n\n Coversation History:\n\n"
+        if request.chatHistory and request.chatHistory[0].get("role") == "system":
+            chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}\n\n"
             start_index = 1
 
-        # Process the rest of the history (except the last message)
         for msg in request.chatHistory[start_index:-1]:
-            role = msg.get("role", "user").lower()
-            content = msg.get("content", "")
-            if role == "user":
-                chat_history_text += f"User: {content}\n"
-            else:
-                chat_history_text += f"Assistant: {content}\n"
+            role = msg.get("role", "user").title()
+            chat_history_text += f"{role}: {msg.get('content')}\n"
 
-        # Construct full prompt with the last user message
-        last_user_content = request.chatHistory[-1]["content"] if request.chatHistory else "Hello"
-        full_prompt = chat_history_text + f"User: {last_user_content}"
+        last_msg = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
+        full_prompt = chat_history_text + f"User: {last_msg}"
 
-        print("\n--- FINAL PROMPT TO AGENT ---")
-        print(full_prompt)
-        print("--- TOOLS ---")
-        if agent.tools:
-            tool_names = []
-            for t in agent.tools:
-                if hasattr(t, "name"):
-                    tool_names.append(t.name)
-                elif hasattr(t, "__name__"):
-                    tool_names.append(t.__name__)
-                else:
-                    tool_names.append(str(t))
-            print(tool_names)
-        else:
-            print("No tools")
-        print("-----------------------------\n")
+        # Debug logs
+        print(f"\n--- FINAL PROMPT ---\n{full_prompt}\n--- TOOLS: {[t.name for t in agno_tools]} ---\n")
 
-        logger.info(f"Running agent with full prompt (history + last message)")
+        # 7. Run Agent
         response = await agent.arun(full_prompt)
 
-        # Return structured response
+        # 8. Return Response
         if isinstance(response.content, WhatsAppResponse):
-            logger.info("Successfully generated structured response.")
             return response.content
-        else:
-            logger.warning("Response content was not WhatsAppResponse instance. Falling back.")
-            return WhatsAppResponse(
-                responseText=str(response.content),
-                responseWATemplate="",
-                saveDataVariable="",
-                saveDataValue="",
-                waTemplateParams=[]
-            )
+        
+        # Fallback
+        return WhatsAppResponse(
+            responseText=str(response.content),
+            responseWATemplate="",
+            saveDataVariable="",
+            saveDataValue="",
+            waTemplateParams=[]
+        )
 
     except Exception as e:
         logger.exception(f"Error in /wa-agent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 if __name__ == "__main__":
     import uvicorn
