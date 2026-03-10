@@ -65,32 +65,25 @@ class AgentRequest(BaseModel):
 
 @app.post("/wa-agent", response_model=WhatsAppResponse)
 async def run_agent_endpoint(request: AgentRequest):
+    print(f"\n--- New Request: Task ID {request.taskId} ---")
+    print(f"Account: {request.accountId} | Campaign: {request.campaignId}")
+    
     try:
         model_id = request.templateSettings.get("model", "gpt-4o-mini")
         temperature = request.templateSettings.get("temperature", 0.7)
         base_system_prompt = request.templateSettings.get("callprompt", "You are a helpful assistant.")
-        
-        # Enable Merakle knowledge (MCP tools) based on campaign settings
         enable_tools = request.templateSettings.get("campaign_settings", {}).get("enable_merakle_knowledge", False)
         
-        # In Agno, we can define tools as functions
-        # This is a simplified version; in a real scenario, you'd discover tools from the MCP server
+        print(f"Model: {model_id} | Temperature: {temperature}")
+        print(f"Tools Enabled: {enable_tools}")
+
         tools = []
         if enable_tools:
-            # Note: For Agno, we'd typically register available tools here.
-            # Since the JS code seems to dynamically call ANY tool requested by LLM, 
-            # we'll provide a generic tool or use Agno's native MCP support if possible.
-            # For now, we'll implement it as a function the agent can call.
             tools.append(call_mcp_server)
 
-        # 4. Initialize Agno Agent with Memory to handle chatHistory
-        from agno.memory.agent import AgentMemory
-        from agno.memory.db.sqlite import SqliteMemoryDb
+        # 4. Initialize Agno Agent
         from agno.utils.log import logger
-
-        # Convert input chatHistory to Agno message format if needed, 
-        # but Agno Agents usually manage history in their own memory.
-        # For a stateless API call, we can pass the history to the agent's memory.
+        
         agent = Agent(
             model=OpenAIChat(id=model_id, api_key=OPENAI_API_KEY, temperature=temperature),
             instructions=[
@@ -102,13 +95,12 @@ async def run_agent_endpoint(request: AgentRequest):
             output_schema=WhatsAppResponse,
             markdown=False,
             show_tool_calls=True,
-            # We don't need a persistent DB for a stateless API call, 
-            # so we use in-memory history.
             add_history_to_messages=True, 
         )
 
-        # In Agno, we can manually add messages to the agent's memory before running
-        for msg in request.chatHistory[:-1]:  # Add all but the last message to history
+        # Inject chat history into agent memory
+        print(f"Injecting {len(request.chatHistory)} messages into memory...")
+        for msg in request.chatHistory[:-1]:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if role == "user":
@@ -116,15 +108,22 @@ async def run_agent_endpoint(request: AgentRequest):
             else:
                 agent.memory.add_assistant_message(content)
 
-        # 5. Run Agent with the last user message
+        # 5. Run Agent
         last_user_message = request.chatHistory[-1]["content"] if request.chatHistory else "Hello"
+        print(f"Last User Message: {last_user_message}")
+        
+        print("Agent is thinking/calling tools...")
         response = await agent.arun(last_user_message)
         
-        # Agno's structured output is in response.content (as a WhatsAppResponse instance)
+        # Agno's structured output
         if isinstance(response.content, WhatsAppResponse):
+            print("Successfully generated structured response.")
+            print(f"Response Text: {response.content.responseText}")
+            if response.content.responseWATemplate:
+                print(f"WA Template: {response.content.responseWATemplate} | Params: {response.content.waTemplateParams}")
             return response.content
         else:
-            # Fallback if parsing fails (though Agno handles it)
+            print("Warning: Response content was not an instance of WhatsAppResponse. Falling back.")
             return WhatsAppResponse(
                 responseText=str(response.content),
                 responseWATemplate="",
@@ -134,7 +133,9 @@ async def run_agent_endpoint(request: AgentRequest):
             )
 
     except Exception as e:
-        print(f"Error running agent: {e}")
+        print(f"ERROR in /wa-agent: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
