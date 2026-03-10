@@ -1,0 +1,7 @@
+agno
+fastapi
+uvicorn
+httpx
+pydantic
+pydantic-settings
+openai
