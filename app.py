@@ -179,7 +179,6 @@ async def run_agent_endpoint(request: AgentRequest):
             tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
-            num_calls=10
         )
 
         # -------------------------------------------------------
