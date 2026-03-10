@@ -8,8 +8,13 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-openai-key")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MCP_SERVER_BASE_URLS = ['https://api.merakle.ai/v1/b/mcp/messages']
 
 # 1. Structured Output Schema
@@ -95,14 +100,14 @@ async def run_agent_endpoint(request: AgentRequest):
         )
 
         # Inject chat history into agent memory
-        logger.info(f"Injecting {len(request.chatHistory)} messages into memory...")
-        for msg in request.chatHistory[:-1]:
-            role = msg.get("role", "user").lower()
-            content = msg.get("content", "")
-            if role == "user":
-                agent.memory.add_user_message(content)
-            else:
-                agent.memory.add_assistant_message(content)
+        # logger.info(f"Injecting {len(request.chatHistory)} messages into memory...")
+        # for msg in request.chatHistory[:-1]:
+        #     role = msg.get("role", "user").lower()
+        #     content = msg.get("content", "")
+        #     if role == "user":
+        #         agent.memory.add_user_message(content)
+        #     else:
+        #         agent.memory.add_assistant_message(content)
 
         # Last user message
         last_message = request.chatHistory[-1]["content"] if request.chatHistory else "Hello"
