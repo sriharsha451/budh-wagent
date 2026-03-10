@@ -58,10 +58,10 @@ def build_agno_tool(mcp_tool_def: Dict):
     tool_desc = mcp_tool_def.get("description", "No description provided.")
 
     @tool(name=tool_name, description=tool_desc)
-    async def mcp_executor(**kwargs):
+    async def mcp_executor(arguments: Dict[str, Any] = {}) -> Dict[str, Any]:
         # This is the function the agent actually calls
-        logger.info(f"Executing MCP Tool: {tool_name} with args: {kwargs}")
-        result = await call_mcp_server("tools/call", {"name": tool_name, "arguments": kwargs})
+        logger.info(f"Executing MCP Tool: {tool_name} with args: {arguments}")
+        result = await call_mcp_server("tools/call", {"name": tool_name, "arguments": arguments})
         return result
 
     return mcp_executor
