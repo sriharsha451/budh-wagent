@@ -191,26 +191,19 @@ async def run_agent_endpoint(request: AgentRequest):
 
         if request.chatHistory and request.chatHistory[0].get("role") == "system":
             chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}\n\n"
-
-"
             start_index = 1
 
         for msg in request.chatHistory[start_index:-1]:
             role = msg.get("role", "user").title()
-            chat_history_text += f"{role}: {msg.get('content')}
-"
+            chat_history_text += f"{role}: {msg.get('content')}\n"
 
         last_msg = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
 
         full_prompt = chat_history_text + f"User: {last_msg}"
 
-        print("
---- FINAL PROMPT ---
-")
+        print("\n--- FINAL PROMPT ---\n")
         print(full_prompt)
-        print("
---------------------
-")
+        print("\n--------------------\n")
 
         # -------------------------------------------------------
         # 8. Run Agent
