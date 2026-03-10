@@ -57,16 +57,21 @@ async def call_mcp_server(name: str, arguments: Dict[str, Any]) -> Any:
 app = FastAPI()
 
 class AgentRequest(BaseModel):
-    accountId: str
-    campaignId: str
-    taskId: str
+    accountId: Any
+    campaignId: Any
+    taskId: Any
     chatHistory: List[Dict[str, str]]
     templateSettings: Dict[str, Any]
 
 @app.post("/wa-agent", response_model=WhatsAppResponse)
 async def run_agent_endpoint(request: AgentRequest):
-    print(f"\n--- New Request: Task ID {request.taskId} ---")
-    print(f"Account: {request.accountId} | Campaign: {request.campaignId}")
+    # Ensure IDs are strings for consistency
+    task_id = str(request.taskId)
+    account_id = str(request.accountId)
+    campaign_id = str(request.campaignId)
+    
+    print(f"\n--- New Request: Task ID {task_id} ---")
+    print(f"Account: {account_id} | Campaign: {campaign_id}")
     
     try:
         model_id = request.templateSettings.get("model", "gpt-4o-mini")
@@ -88,7 +93,7 @@ async def run_agent_endpoint(request: AgentRequest):
             model=OpenAIChat(id=model_id, api_key=OPENAI_API_KEY, temperature=temperature),
             instructions=[
                 base_system_prompt,
-                f"The merakle_call_id for this call is {request.taskId}.",
+                f"The merakle_call_id for this call is {task_id}.",
                 "Respond naturally to the user."
             ],
             tools=tools,
