@@ -86,31 +86,6 @@ async def merakle_demo_get_service_request_id() -> Dict[str, Any]:
     return result
 
 
-@tool(
-    name="create_support_ticket",
-    description="Create a customer support ticket."
-)
-async def create_support_ticket(
-    phone_number: str,
-    issue_description: str
-) -> Dict[str, Any]:
-
-    logger.info(f"Executing tool: create_support_ticket for {phone_number}")
-
-    result = await call_mcp_server(
-        "tools/call",
-        {
-            "name": "create_support_ticket",
-            "arguments": {
-                "phone_number": phone_number,
-                "issue_description": issue_description
-            }
-        }
-    )
-
-    return result
-
-
 # -------------------------------------------------------
 # 4. FastAPI App
 # -------------------------------------------------------
@@ -154,8 +129,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info("Registering MCP-backed tools")
 
             agno_tools = [
-                merakle_demo_get_service_request_id,
-                create_support_ticket
+                merakle_demo_get_service_request_id
             ]
 
         # -------------------------------------------------------
