@@ -64,16 +64,12 @@ async def call_mcp_server(method: str, params: dict) -> Any:
 
 
 # -------------------------------------------------------
-# 3. Python-defined Tools (calling MCP internally)
+# 3. Python-defined Tools (Core Logic)
 # -------------------------------------------------------
 
-@tool(
-    name="merakle_demo_get_service_request_id",
-    description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
-)
-async def merakle_demo_get_service_request_id() -> str: # Changed return type hint to str
-
-    logger.info("Executing tool: merakle_demo_get_service_request_id")
+async def get_service_request_id_logic() -> str:
+    """Core logic for generating a service request ID."""
+    logger.info("Executing core logic: get_service_request_id")
 
     # Call the MCP server
     mcp_result = await call_mcp_server(
@@ -84,18 +80,17 @@ async def merakle_demo_get_service_request_id() -> str: # Changed return type hi
         }
     )
 
-    # Extract the ID from the MCP result for clarity to the LLM
-    # Assuming the MCP server returns the ID in a key like "id" or "output"
+    # Extract the ID from the MCP result
     if isinstance(mcp_result, dict):
         service_request_id = mcp_result.get("id") or mcp_result.get("output")
         if service_request_id:
             logger.info(f"Generated Service Request ID: {service_request_id}")
-            return str(service_request_id) # Ensure it's a string
+            return str(service_request_id)
         else:
             logger.error(f"MCP result for get_service_request_id did not contain an ID: {mcp_result}")
             return "Error: Could not generate a service request ID."
     else:
-        logger.error(f"Unexpected MCP result type for get_service_request_id: {type(mcp_result)}")
+        logger.error(f"Unexpected MCP result type: {type(mcp_result)}")
         return "Error: Could not generate a service request ID."
 
 
@@ -118,9 +113,11 @@ class AgentRequest(BaseModel):
 async def run_agent_endpoint(request: AgentRequest):
 
     try:
-
         task_id = str(request.taskId)
         logger.info(f"--- New Request: Task {task_id} ---")
+
+        # Request-scoped tool cache
+        tool_cache = {}
 
         # Extract settings
         ts = request.templateSettings
@@ -133,13 +130,28 @@ async def run_agent_endpoint(request: AgentRequest):
         )
 
         # -------------------------------------------------------
-        # 5. Register Tools (Python-defined)
+        # 5. Register Tools (Python-defined with Caching)
         # -------------------------------------------------------
 
         agno_tools = []
 
         if enable_tools:
             logger.info("Registering MCP-backed tools")
+
+            @tool(
+                name="merakle_demo_get_service_request_id",
+                description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
+            )
+            async def merakle_demo_get_service_request_id() -> str:
+                """Cached wrapper for service request ID generation."""
+                cache_key = "get_service_request_id"
+                if cache_key in tool_cache:
+                    logger.info("Returning cached Service Request ID")
+                    return tool_cache[cache_key]
+                
+                result = await get_service_request_id_logic()
+                tool_cache[cache_key] = result
+                return result
 
             agno_tools = [
                 merakle_demo_get_service_request_id
