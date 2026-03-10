@@ -108,7 +108,7 @@ async def run_agent_endpoint(request: AgentRequest):
         if first_msg.get("role", "").lower() == "system":
             # If system role exists, we can add it to instructions or prepend it
             # Following your pattern of text-based history:
-            chat_history_text += f"System Instructions: {first_msg.get('content', '')}\n\n"
+            chat_history_text += f"System Instructions: {first_msg.get('content', '')}\n\n Coversation History:\n\n"
             start_index = 1
 
         # Process the rest of the history (except the last message)
@@ -127,7 +127,18 @@ async def run_agent_endpoint(request: AgentRequest):
         print("\n--- FINAL PROMPT TO AGENT ---")
         print(full_prompt)
         print("--- TOOLS ---")
-        print([t.name for t in agent.tools] if agent.tools else "No tools")
+        if agent.tools:
+            tool_names = []
+            for t in agent.tools:
+                if hasattr(t, "name"):
+                    tool_names.append(t.name)
+                elif hasattr(t, "__name__"):
+                    tool_names.append(t.__name__)
+                else:
+                    tool_names.append(str(t))
+            print(tool_names)
+        else:
+            print("No tools")
         print("-----------------------------\n")
 
         logger.info(f"Running agent with full prompt (history + last message)")
