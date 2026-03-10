@@ -99,7 +99,6 @@ async def run_agent_endpoint(request: AgentRequest):
             tools=tools,
             output_schema=WhatsAppResponse,
             markdown=False,
-            add_history_to_messages=True, 
         )
 
         # Inject chat history into agent memory
