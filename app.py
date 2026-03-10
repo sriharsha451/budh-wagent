@@ -69,13 +69,14 @@ async def call_mcp_server(method: str, params: dict) -> Any:
 
 @tool(
     name="merakle_demo_get_service_request_id",
-    description="Generate a 7-digit service request ID."
+    description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
 )
-async def merakle_demo_get_service_request_id() -> Dict[str, Any]:
+async def merakle_demo_get_service_request_id() -> str: # Changed return type hint to str
 
     logger.info("Executing tool: merakle_demo_get_service_request_id")
 
-    result = await call_mcp_server(
+    # Call the MCP server
+    mcp_result = await call_mcp_server(
         "tools/call",
         {
             "name": "merakle_demo_get_service_request_id",
@@ -83,7 +84,19 @@ async def merakle_demo_get_service_request_id() -> Dict[str, Any]:
         }
     )
 
-    return result
+    # Extract the ID from the MCP result for clarity to the LLM
+    # Assuming the MCP server returns the ID in a key like "id" or "output"
+    if isinstance(mcp_result, dict):
+        service_request_id = mcp_result.get("id") or mcp_result.get("output")
+        if service_request_id:
+            logger.info(f"Generated Service Request ID: {service_request_id}")
+            return str(service_request_id) # Ensure it's a string
+        else:
+            logger.error(f"MCP result for get_service_request_id did not contain an ID: {mcp_result}")
+            return "Error: Could not generate a service request ID."
+    else:
+        logger.error(f"Unexpected MCP result type for get_service_request_id: {type(mcp_result)}")
+        return "Error: Could not generate a service request ID."
 
 
 # -------------------------------------------------------
@@ -165,6 +178,8 @@ async def run_agent_endpoint(request: AgentRequest):
         if request.chatHistory and request.chatHistory[0].get("role") == "system":
             chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}\n\n"
             start_index = 1
+        
+        chat_history_text += "Conversation History:\n"
 
         for msg in request.chatHistory[start_index:-1]:
             role = msg.get("role", "user").title()
