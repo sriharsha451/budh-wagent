@@ -4,7 +4,8 @@ import uuid
 from typing import List, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
-from agno.agent import Agent, Tool
+from agno.agent import Agent
+from agno.tools import tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from dotenv import load_dotenv
@@ -51,23 +52,19 @@ async def fetch_mcp_tools() -> List[Dict]:
     result = await call_mcp_server("tools/list", {})
     return result.get("tools", [])
 
-def build_agno_tool(mcp_tool_def: Dict) -> Tool:
-    """Dynamically builds an Agno Tool from an MCP tool definition."""
+def build_agno_tool(mcp_tool_def: Dict):
+    """Dynamically builds an Agno Tool from an MCP tool definition using the @tool decorator."""
     tool_name = mcp_tool_def["name"]
     tool_desc = mcp_tool_def.get("description", "No description provided.")
 
+    @tool(name=tool_name, description=tool_desc)
     async def mcp_executor(**kwargs):
         # This is the function the agent actually calls
         logger.info(f"Executing MCP Tool: {tool_name} with args: {kwargs}")
         result = await call_mcp_server("tools/call", {"name": tool_name, "arguments": kwargs})
-        # Return the content/result to the agent
         return result
 
-    return Tool(
-        name=tool_name,
-        description=tool_desc,
-        entry_point=mcp_executor
-    )
+    return mcp_executor
 
 # 3. FastAPI App
 app = FastAPI()
@@ -131,7 +128,7 @@ async def run_agent_endpoint(request: AgentRequest):
         full_prompt = chat_history_text + f"User: {last_msg}"
 
         # Debug logs
-        print(f"\n--- FINAL PROMPT ---\n{full_prompt}\n--- TOOLS: {[t.name for t in agno_tools]} ---\n")
+        print(f"\n--- FINAL PROMPT ---\n{full_prompt}\n")
 
         # 7. Run Agent
         response = await agent.arun(full_prompt)
