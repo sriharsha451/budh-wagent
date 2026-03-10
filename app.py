@@ -26,13 +26,13 @@ class WhatsAppResponse(BaseModel):
     waTemplateParams: List[str] = Field(..., description="Parameters for template placeholders")
 
 # 2. MCP Tool Logic (Auto-wrapped by Agno)
-async def call_mcp_server(name: str, arguments: Dict[str, Any]) -> Any:
+async def call_mcp_server(name: str, arguments: dict) -> Any:
     """
     Call the MCP server to execute a specific tool with arguments.
     
     Args:
         name (str): The name of the tool to execute.
-        arguments (dict): The arguments for the tool call.
+        arguments (dict): The arguments for the tool call as a dictionary.
     """
     url = MCP_SERVER_BASE_URLS[0]
     payload = {
