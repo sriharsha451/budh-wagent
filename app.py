@@ -4,7 +4,7 @@ import uuid
 from typing import List, Any, Dict
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
-from agno.agent import Agent, Tool
+from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 
@@ -20,12 +20,19 @@ class WhatsAppResponse(BaseModel):
     saveDataValue: str = Field(..., description="Value for the saved variable")
     waTemplateParams: List[str] = Field(..., description="Parameters for template placeholders")
 
-# 2. MCP Tool Logic
+# 2. MCP Tool Logic (Auto-wrapped by Agno)
 async def call_mcp_server(name: str, arguments: Dict[str, Any]) -> Any:
+    """
+    Call the MCP server to execute a specific tool with arguments.
+    
+    Args:
+        name (str): The name of the tool to execute.
+        arguments (dict): The arguments for the tool call.
+    """
     url = MCP_SERVER_BASE_URLS[0]
     payload = {
         "jsonrpc": "2.0",
-        "id": str(uuid.uuid4()),  # unique per request
+        "id": str(uuid.uuid4()),
         "method": "tools/call",
         "params": {"name": name, "arguments": arguments}
     }
@@ -39,15 +46,11 @@ async def call_mcp_server(name: str, arguments: Dict[str, Any]) -> Any:
                 logger.error(f"MCP error: {data['error']}")
                 return {"error": data["error"].get("message", "Unknown MCP error")}
             
-            # Extract content from result
             result = data.get("result", {})
             return result.get("content", []) or result.get("output", [])
     except Exception as e:
         logger.exception(f"MCP request failed: {e}")
         return {"error": str(e)}
-
-# Wrap MCP call as a Tool
-mcp_tool = Tool(name="callMCPServer", func=call_mcp_server)
 
 # 3. FastAPI App
 app = FastAPI()
@@ -75,10 +78,10 @@ async def run_agent_endpoint(request: AgentRequest):
 
         logger.info(f"Model: {model_id} | Temperature: {temperature} | Tools Enabled: {enable_tools}")
 
-        # Tools list
-        tools = [mcp_tool] if enable_tools else []
+        # Tools list — functions auto-wrapped by Agno
+        tools = [call_mcp_server] if enable_tools else []
 
-        # Initialize Agno Agent
+        # Initialize Agno Agent (Using the provided example pattern)
         agent = Agent(
             model=OpenAIChat(id=model_id, api_key=OPENAI_API_KEY, temperature=temperature),
             instructions=[
@@ -88,8 +91,7 @@ async def run_agent_endpoint(request: AgentRequest):
             ],
             tools=tools,
             output_schema=WhatsAppResponse,
-            markdown=False
-            # Removed show_tool_calls and add_history_to_messages due to environment compatibility
+            markdown=False,
         )
 
         # Inject chat history into agent memory
@@ -113,7 +115,6 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info("Successfully generated structured response.")
             return response.content
         else:
-            # Fallback for unexpected content
             logger.warning("Response content was not WhatsAppResponse instance. Falling back.")
             return WhatsAppResponse(
                 responseText=str(response.content),
