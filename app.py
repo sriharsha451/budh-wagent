@@ -26,11 +26,12 @@ http_client = httpx.AsyncClient(timeout=30)
 # -------------------------------------------------------
 
 class WhatsAppResponse(BaseModel):
-    responseText: str = Field(..., description="AI's message to the user")
-    responseWATemplate: str = Field(..., description="WhatsApp template ID if used")
-    saveDataVariable: str = Field(..., description="Variable name to save user data")
-    saveDataValue: str = Field(..., description="Value for the saved variable")
-    waTemplateParams: List[str] = Field(..., description="Parameters for template placeholders")
+    responseText: str = Field(..., description="AI's message to the user; can be empty if using a WhatsApp template")
+    responseWATemplate: str = Field(..., description="WhatsApp template ID to respond with, if applicable")
+    saveDataVariable: str = Field(..., description="Variable name (e.g., 'contact_status') to save user's response data, if needed")
+    saveDataValue: str = Field(..., description="Value of data to be saved for saveDataVariable, if applicable")
+    waTemplateParams: List[str] = Field(..., description="An array of parameters to fill placeholders in the WhatsApp template, if applicable")
+
     isEndOfConversation: bool = Field(
         ..., 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
