@@ -31,6 +31,10 @@ class WhatsAppResponse(BaseModel):
     saveDataVariable: str = Field(..., description="Variable name to save user data")
     saveDataValue: str = Field(..., description="Value for the saved variable")
     waTemplateParams: List[str] = Field(..., description="Parameters for template placeholders")
+    isEndOfConversation: bool = Field(
+        ..., 
+        description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
+    )
 
 
 # -------------------------------------------------------
@@ -212,7 +216,7 @@ async def run_agent_endpoint(request: AgentRequest):
             chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}\n\n"
             start_index = 1
         
-        chat_history_text += "Conversation History:\n"
+        chat_history_text += "\n\nConversation History:\n"
 
         for msg in request.chatHistory[start_index:-1]:
             role = msg.get("role", "user").title()
@@ -244,7 +248,8 @@ async def run_agent_endpoint(request: AgentRequest):
             responseWATemplate="",
             saveDataVariable="",
             saveDataValue="",
-            waTemplateParams=[]
+            waTemplateParams=[],
+            isEndOfConversation=False
         )
 
     except Exception as e:
