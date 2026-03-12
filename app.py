@@ -76,7 +76,7 @@ async def call_mcp_server(method: str, params: dict) -> Any:
 
 async def search_knowledge_base(campaign_id: str, query: str) -> Any:
     """Search knowledgebase for answers to user's queries."""
-    url = f"{KNOWLEDGE_API_ENDPOINT}/campaigns/{campaign_id}/knowledge/search"
+    url = f"{KNOWLEDGE_API_ENDPOINT}/text-campaigns/{campaign_id}/knowledge/search"
     headers = {
         "x-api-key": f"{KNOWLEDGE_API_KEY}"
     }
