@@ -15,6 +15,8 @@ load_dotenv()
 
 # Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+KNOWLEDGE_API_ENDPOINT = os.getenv("KNOWLEDGE_API_ENDPOINT")
+KNOWLEDGE_API_KEY = os.getenv("KNOWLEDGE_API_KEY")
 MCP_SERVER_URL = "https://api.merakle.ai/v1/b/mcp/messages"
 
 # Reusable HTTP client
@@ -71,6 +73,25 @@ async def call_mcp_server(method: str, params: dict) -> Any:
 # -------------------------------------------------------
 # 3. Generic MCP Tool Executor (with Caching)
 # -------------------------------------------------------
+
+async def search_knowledge_base(campaign_id: str, query: str) -> Any:
+    """Search knowledgebase for answers to user's queries."""
+    url = f"{KNOWLEDGE_API_ENDPOINT}/campaigns/{campaign_id}/knowledge/search"
+    headers = {
+        "x-api-key": f"{KNOWLEDGE_API_KEY}"
+    }
+    payload = {
+        "query": query
+    }
+
+    try:
+        response = await http_client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.exception(f"Knowledge base search failed: {e}")
+        return {"error": str(e)}
+
 
 async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     """
@@ -179,8 +200,20 @@ async def run_agent_endpoint(request: AgentRequest):
                     tool_cache
                 )
 
+            @tool(
+                name="search_knowledge",
+                description="Search knowledgebase for answers to user's queries"
+            )
+            async def search_knowledge(query: str) -> str:
+                """Search knowledgebase for answers to user's queries."""
+                campaign_id = str(request.campaignId)
+                json_res = await search_knowledge_base(campaign_id, query)
+                import json
+                return json.dumps(json_res, indent=2)
+
             agno_tools = [
-                merakle_demo_get_service_request_id
+                merakle_demo_get_service_request_id,
+                search_knowledge
             ]
 
         # -------------------------------------------------------
