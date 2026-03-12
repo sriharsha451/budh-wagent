@@ -172,7 +172,7 @@ async def run_agent_endpoint(request: AgentRequest):
         # Extract settings
         ts = request.templateSettings
         model_id = ts.get("model", "gpt-4o-mini")
-        temperature = ts.get("temperature", 0.7)
+        temperature = ts.get("temperature", 0)
         base_prompt = ts.get("callprompt", "You are a helpful assistant.")
 
         enable_tools = ts.get("campaign_settings", {}).get(
@@ -237,6 +237,9 @@ async def run_agent_endpoint(request: AgentRequest):
             tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
+            show_tool_calls=True,
+            tool_call_limit=1, # The Agent will not perform more than one tool call.
+
         )
 
         # -------------------------------------------------------
