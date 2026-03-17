@@ -237,7 +237,6 @@ async def run_agent_endpoint(request: AgentRequest):
             tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
-            show_tool_calls=True,
             tool_call_limit=1, # The Agent will not perform more than one tool call.
 
         )
