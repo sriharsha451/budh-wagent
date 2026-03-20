@@ -34,6 +34,7 @@ class WhatsAppResponse(BaseModel):
     saveDataValue: str = Field(..., description="Value of data to be saved for saveDataVariable, if applicable")
     waTemplateParams: List[str] = Field(..., description="An array of parameters to fill placeholders in the WhatsApp template, if applicable")
     waTemplateContent: str = Field(..., description="Whatsapp template content, if applicable")
+    sendFileAssetId: str = Field(..., description="Asset ID of file to send the user, if applicable")
     isEndOfConversation: bool = Field(
         ..., 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
@@ -286,6 +287,7 @@ async def run_agent_endpoint(request: AgentRequest):
             saveDataValue="",
             waTemplateParams=[],
             waTemplateContent="",
+            sendFileAssetId="",
             isEndOfConversation=False
         )
 
