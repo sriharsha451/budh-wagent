@@ -28,133 +28,17 @@ http_client = httpx.AsyncClient(timeout=30)
 # -------------------------------------------------------
 
 class WhatsAppResponse(BaseModel):
-    responseText: Optional[str] = Field(None, description="AI's message/response to the user if applicable")
-    responseWATemplate: Optional[str] = Field(None, description="WhatsApp template ID to respond with, if applicable")
-    saveDataVariable: Optional[str] = Field(None, description="Variable name (e.g., 'contact_status') to save user's response data, if needed")
-    saveDataValue: Optional[str] = Field(None, description="Value of data to be saved for saveDataVariable, if applicable")
-    waTemplateParams: List[str] = Field(default_factory=list, description="An array of parameters to fill placeholders in the WhatsApp template, if applicable")
-    waTemplateContent: Optional[str] = Field(None, description="Whatsapp template content, if applicable")
-    fileAssetId: Optional[str] = Field(None, description="Asset ID of file to send the user, if applicable")
+    responseText: str = Field(..., description="AI's message/response to the user if applicable")
+    responseWATemplate: str = Field(..., description="WhatsApp template ID to respond with, if applicable")
+    saveDataVariable: str = Field(..., description="Variable name (e.g., 'contact_status') to save user's response data, if needed")
+    saveDataValue: str = Field(..., description="Value of data to be saved for saveDataVariable, if applicable")
+    waTemplateParams: List[str] = Field(..., description="An array of parameters to fill placeholders in the WhatsApp template, if applicable")
+    waTemplateContent: str = Field(..., description="Whatsapp template content, if applicable")
+    fileAssetId: str = Field(..., description="Asset ID of file to send the user, if applicable")
     isEndOfConversation: bool = Field(
-        False, 
+        ..., 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
-
-
-# -------------------------------------------------------
-# 1.1. Validator Instructions
-# -------------------------------------------------------
-
-VALIDATOR_INSTRUCTIONS = """
-OUTPUT JSON CONSTRAINTS:
-  1) In output json, responseText and responseWATemplate are mutually exclusive props. 
-     Only 1 can be set at a time. 
-     If responseWATemplate is set then waTemplateParams and waTemplateContent also needs to be set.
-  2) Always return a structured JSON object in the following exact format:
-
-        {
-        "responseText": "string | null",
-        "responseWATemplate": "string | null",
-        "saveDataVariable": "string | null",
-        "saveDataValue": "string | null",
-        "waTemplateParams": ["string"],
-        "waTemplateContent": "string | null",
-        "fileAssetId": "string | null",
-        "isEndOfConversation": true
-        }
-
-
-        ### Field Rules:
-
-        * "responseText" -> Use when sending a plain text reply
-        * "responseWATemplate" -> Use when sending a WhatsApp template ID
-        * "saveDataVariable" and "saveDataValue" -> Use together when storing user data
-        * "waTemplateParams" -> Always return an array (use [] if not applicable)
-        * "waTemplateContent" -> Rendered message content for the template
-        * "fileAssetId" -> Use ONLY when sending a file to the user
-        * "isEndOfConversation" -> true only when the conversation is fully complete, otherwise false
-
-        ---
-
-        ### 🚫 Mutual Exclusivity Rule (VERY IMPORTANT):
-
-        * "responseText" and "responseWATemplate" are **mutually exclusive**
-        * If "responseText" is NOT null -> "responseWATemplate" MUST be null
-        * If "responseWATemplate" is NOT null -> "responseText" MUST be null
-        * NEVER set both fields at the same time
-        * NEVER leave both as null unless only sending file or save_data without user message
-
-        ---
-
-        ### 📁 File Handling Rule (VERY IMPORTANT):
-        "fileAssetId" must be set ONLY when the AI is sending a file to the user
-        If the user sends a file:
-        DO NOT copy or reuse that file ID
-        DO NOT set "fileAssetId" unless explicitly responding with a file
-        In all other cases, set "fileAssetId" to null          
-
-        --- 
-
-        ### Strict Rules:
-
-        * Always include ALL fields in every response
-        * Do NOT remove or rename any fields
-        * Use null for fields that are not applicable
-        * "waTemplateParams" must always be an array (never null)
-        * Do NOT include any extra fields
-        * Do NOT include any text outside the JSON
-        * Ensure valid JSON (double quotes only, no trailing commas)
-
-        ---
-
-  3) If the Chat Agent Workflow Summary specifies saving a variable:
-
-    * You MUST populate "saveDataVariable" and "saveDataValue" exactly as instructed
-    * Do NOT modify variable names
-
-    ---
-
-    15) Each response must be independent:
-
-    * Do NOT carry forward values from previous turns
-    * Always explicitly reset unused fields to null (or [] for arrays)
-
-    ---
-
-    ### Examples:
-
-    ✅ Valid (Text response):
-    {
-    "responseText": "Hi! I am Mac. What's your name?",
-    "responseWATemplate": null,
-    "saveDataVariable": null,
-    "saveDataValue": null,
-    "waTemplateParams": [],
-    "waTemplateContent": null,
-    "fileAssetId": null,
-    "isEndOfConversation": false
-    }
-
-
-    ✅ Valid (Template response):
-    {
-    "responseText": null,
-    "responseWATemplate": "abcjshfs-38kj4f-fslkfhs8-fsifh9",
-    "saveDataVariable": "contact_name",
-    "saveDataValue": "Alex",
-    "waTemplateParams": ["Alex"],
-    "waTemplateContent": "Thanks Alex, would you like to know about Textgen?",
-    "fileAssetId": null,
-    "isEndOfConversation": false
-    }
-
-
-    ❌ Invalid (DO NOT DO THIS):
-    {
-    "responseText": "Hello",
-    "responseWATemplate": "template_123"
-    }
-"""
 
 
 # -------------------------------------------------------
@@ -384,72 +268,26 @@ async def run_agent_endpoint(request: AgentRequest):
         print("\n--------------------\n")
 
         # -------------------------------------------------------
-        # 8. Run Agent with Critique Loop
+        # 8. Run Agent
         # -------------------------------------------------------
 
         response = await agent.arun(full_prompt)
-        
-        # Max retries for self-correction
-        max_retries = 2
-        current_attempt = 0
-        
-        final_validated_output = None
-
-        while current_attempt < max_retries:
-            logger.info(f"Running Validator Agent (Attempt {current_attempt + 1})...")
-            
-            validator_agent = Agent(
-                model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY, temperature=0),
-                instructions=[
-                    "You are a strict output validator.",
-                    "Your job is to check the Main Agent's output against the JSON CONSTRAINTS.",
-                    "If the output is valid, return it exactly.",
-                    "If it is invalid (e.g., both responseText and responseWATemplate are set), "
-                    "use the Conversation History to determine the correct intent and fix the JSON.",
-                    VALIDATOR_INSTRUCTIONS
-                ],
-                output_schema=WhatsAppResponse,
-            )
-
-            main_output_str = ""
-            if isinstance(response.content, WhatsAppResponse):
-                main_output_str = response.content.model_dump_json()
-            else:
-                main_output_str = str(response.content)
-
-            # Pass both the history and the output so the validator has context
-            validation_payload = (
-                f"CONVERSATION HISTORY:\n{full_prompt}\n\n"
-                f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
-            )
-            
-            validated_response = await validator_agent.arun(validation_payload)
-            
-            # Check if the validator successfully produced a valid object
-            if isinstance(validated_response.content, WhatsAppResponse):
-                # Basic check: did the validator find a mutual exclusivity violation in the input?
-                # If the validator "fixed" it, we can return. 
-                # (Optional: we could check if it actually changed anything)
-                final_validated_output = validated_response.content
-                logger.info("Validation successful.")
-                break
-            else:
-                # If even the validator failed to produce valid JSON, we retry the main agent with a warning
-                current_attempt += 1
-                logger.warning(f"Validation attempt {current_attempt} failed. Retrying main agent...")
-                retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid. Ensure you follow the JSON constraints strictly. Error: {str(validated_response.content)}"
-                response = await agent.arun(retry_prompt)
 
         # -------------------------------------------------------
         # 9. Return Structured Response
         # -------------------------------------------------------
 
-        if final_validated_output:
-            return final_validated_output
+        if isinstance(response.content, WhatsAppResponse):
+            return response.content
 
-        # Final fallback if loop fails
         return WhatsAppResponse(
             responseText=str(response.content),
+            responseWATemplate="",
+            saveDataVariable="",
+            saveDataValue="",
+            waTemplateParams=[],
+            waTemplateContent="",
+            fileAssetId="",
             isEndOfConversation=False
         )
 
