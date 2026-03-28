@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.tools import tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -345,6 +346,7 @@ async def run_agent_endpoint(request: AgentRequest):
             ),
             instructions=[
                 base_prompt,
+                f"The current date and time is {datetime.now()}.",
                 f"The merakle_call_id for this call is {task_id}.",
                 "Respond naturally to the user.",
                 "Use tools when necessary.",
