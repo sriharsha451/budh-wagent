@@ -289,7 +289,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
         # Extract settings
         ts = request.templateSettings
-        model_id = ts.get("model", "gpt-4o-mini")
+        model_id = ts.get("model", "gpt-4.1-mini")
         temperature = ts.get("temperature", 0)
         base_prompt = ts.get("callprompt", "You are a helpful assistant.")
 
@@ -401,7 +401,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Validator Agent (Attempt {current_attempt + 1})...")
             
             validator_agent = Agent(
-                model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY, temperature=0),
+                model=OpenAIChat(id="gpt-4.1-mini", api_key=OPENAI_API_KEY, temperature=0),
                 instructions=[
                     "You are a strict output validator.",
                     "Your job is to check the Main Agent's output against the JSON CONSTRAINTS.",
