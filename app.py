@@ -309,10 +309,10 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
 
     @tool(
         name="textgen_trigger_node_wait",
-        description="Extracts a future timestamp from the user's query and updates the task's wait time. Call this when the user asks to be contacted later or at a specific time."
+        description="Extracts a future timestamp from the user's wait criteria. Call this only when instructed by a Step."
     )
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
-        """Extracts a future timestamp from the user's query and updates the task's wait time."""
+        """Extracts a future timestamp from the user's wait criteria. Call this only when instructed by a Step."""
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         
         prompt = f"""
