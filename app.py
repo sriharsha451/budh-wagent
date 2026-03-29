@@ -36,6 +36,7 @@ class WhatsAppResponse(BaseModel):
     waTemplateParams: List[str] = Field(default_factory=list, description="An array of parameters to fill placeholders in the WhatsApp template, if applicable")
     waTemplateContent: Optional[str] = Field(None, description="Whatsapp template content, if applicable")
     fileAssetId: Optional[str] = Field(None, description="Asset ID of file to send the user, if applicable")
+    setNextWaitUntil: Optional[str] = Field(None, description="The timestamp to wait until before the next action, in ISO 8601 UTC format (e.g., '2026-03-30T10:00:00Z').")
     isEndOfConversation: bool = Field(
         False, 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
@@ -72,6 +73,7 @@ OUTPUT JSON CONSTRAINTS:
         "waTemplateParams": ["string"],
         "waTemplateContent": "string | null",
         "fileAssetId": "string | null",
+        "setNextWaitUntil": "string | null",
         "isEndOfConversation": true
         }
 
@@ -84,6 +86,7 @@ OUTPUT JSON CONSTRAINTS:
         * "waTemplateParams" -> Always return an array (use [] if not applicable)
         * "waTemplateContent" -> Rendered message content for the template
         * "fileAssetId" -> Use ONLY when sending a file to the user
+        * "setNextWaitUntil" -> Use only when setting a future wait time (ISO 8601 UTC format)
         * "isEndOfConversation" -> true only when the conversation is fully complete, otherwise false
 
         ---
@@ -144,6 +147,7 @@ OUTPUT JSON CONSTRAINTS:
     "waTemplateParams": [],
     "waTemplateContent": null,
     "fileAssetId": null,
+    "setNextWaitUntil": null,
     "isEndOfConversation": false
     }
 
@@ -157,6 +161,7 @@ OUTPUT JSON CONSTRAINTS:
     "waTemplateParams": ["Alex"],
     "waTemplateContent": "Thanks Alex, would you like to know about Textgen?",
     "fileAssetId": null,
+    "setNextWaitUntil": "2026-03-30T10:00:00Z",
     "isEndOfConversation": false
     }
 
@@ -336,18 +341,7 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
             # Clean up the response
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
             
-            url = f"{KNOWLEDGE_API_ENDPOINT}/text-campaignruntasks/{merakle_call_id}"
-            api_headers = {
-                "x-api-key": f"{KNOWLEDGE_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            api_payload = {"next_wait_until": timestamp}
-            
-            logger.info(f"Calling PUT {url} with {api_payload}")
-            put_resp = await http_client.put(url, headers=api_headers, json=api_payload)
-            put_resp.raise_for_status()
-            
-            return f"Successfully updated wait time to {timestamp} for task {merakle_call_id}."
+            return f"Set setNextWaitUntil to {timestamp}"
         except Exception as e:
             logger.exception(f"Error in textgen_trigger_node_wait: {e}")
             return f"Error updating wait time: {str(e)}"
