@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.tools import tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -302,9 +302,60 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
         import json
         return json.dumps(json_res, indent=2)
 
+    @tool(
+        name="textgen_trigger_node_wait",
+        description="Extracts a future timestamp from the user's query and updates the task's wait time. Call this when the user asks to be contacted later or at a specific time."
+    )
+    async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
+        """Extracts a future timestamp from the user's query and updates the task's wait time."""
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        prompt = f"""
+        Current Date and Time (UTC): {now_utc}
+        User Query: {query}
+        
+        Extract the intended future timestamp from the user query and convert it to UTC ISO 8601 format (e.g., 2026-03-30T10:00:00Z).
+        Return ONLY the timestamp string. No other text. Always output in UTC.
+        """
+        
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0
+        }
+        
+        try:
+            resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+            resp.raise_for_status()
+            timestamp = resp.json()["choices"][0]["message"]["content"].strip()
+            
+            # Clean up the response
+            timestamp = timestamp.strip('`').strip('"').strip("'").strip()
+            
+            url = f"{KNOWLEDGE_API_ENDPOINT}/text-campaignruntasks/{merakle_call_id}"
+            api_headers = {
+                "x-api-key": f"{KNOWLEDGE_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            api_payload = {"next_wait_until": timestamp}
+            
+            logger.info(f"Calling PUT {url} with {api_payload}")
+            put_resp = await http_client.put(url, headers=api_headers, json=api_payload)
+            put_resp.raise_for_status()
+            
+            return f"Successfully updated wait time to {timestamp} for task {merakle_call_id}."
+        except Exception as e:
+            logger.exception(f"Error in textgen_trigger_node_wait: {e}")
+            return f"Error updating wait time: {str(e)}"
+
     return [
         merakle_demo_get_service_request_id,
-        search_knowledge
+        search_knowledge,
+        textgen_trigger_node_wait
     ]
 
 
