@@ -216,7 +216,11 @@ async def search_knowledge_base(campaign_id: str, query: str) -> Any:
     try:
         response = await http_client.post(url, headers=headers, json=payload)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        print("\n--- KNOWLEDGE BASE RESPONSE ---")
+        print(data)
+        print("-------------------------------\n")
+        return data
     except Exception as e:
         logger.exception(f"Knowledge base search failed: {e}")
         return {"error": str(e)}
