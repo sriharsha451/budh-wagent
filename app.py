@@ -438,6 +438,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
     try:
         task_id = str(request.taskId)
+        account_id = str(request.accountId)
         logger.info(f"--- New Request: Task {task_id} ---")
 
         # Request-scoped tool cache
@@ -476,6 +477,7 @@ async def run_agent_endpoint(request: AgentRequest):
                 base_prompt,
                 f"The current date and time is {datetime.now()}.",
                 f"The merakle_call_id for this call is {task_id}.",
+                f"The merakle_account_id for this call is {account_id}.",
                 "Respond naturally to the user.",
                 "Use tools when necessary.",
                 "If a tool fails, inform the user and move on.",
