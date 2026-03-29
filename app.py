@@ -323,7 +323,7 @@ class AgentRequest(BaseModel):
     templateSettings: Dict[str, Any]
 
 
-@app.get("/discover-tools", response_model=List[ToolInfo])
+@app.get("/discovery/tools", response_model=List[ToolInfo])
 async def discover_tools_endpoint():
     """Returns a list of all tools available for the agent."""
     try:
@@ -333,13 +333,24 @@ async def discover_tools_endpoint():
         tools_list = []
         for t in agno_tools:
             params = []
+            # DEBUG: Print tool attributes to find the original function
+            print(f"DEBUG: Tool {t.name} type: {type(t)}")
+            print(f"DEBUG: Tool {t.name} dir: {dir(t)}")
+            
             # Inspect parameters if available
             import inspect
-            func = getattr(t, "function", None) or getattr(t, "entry", None)
+            # Try various attributes Agno might use to store the original function
+            func = getattr(t, "entry", None) or getattr(t, "function", None) or getattr(t, "original_function", None)
+            
+            if not func and callable(t):
+                func = t
+
             if func:
                 sig = inspect.signature(func)
                 for name, param in sig.parameters.items():
-                    # Skip 'self' or other common internal params if they somehow appear
+                    # Skip 'self' or other common internal params
+                    if name in ("self", "cls"):
+                        continue
                     params.append(ToolParameter(
                         name=name,
                         type=str(param.annotation.__name__) if hasattr(param.annotation, "__name__") else str(param.annotation)
@@ -354,7 +365,7 @@ async def discover_tools_endpoint():
         return tools_list
 
     except Exception as e:
-        logger.exception(f"Error in /discover-tools: {e}")
+        logger.exception(f"Error in /discovery/tools: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
