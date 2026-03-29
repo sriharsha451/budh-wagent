@@ -336,10 +336,15 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
         try:
             resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
             resp.raise_for_status()
-            timestamp = resp.json()["choices"][0]["message"]["content"].strip()
+            
+            raw_content = resp.json()["choices"][0]["message"]["content"]
+            print(f"\n--- OPENAI RAW RESPONSE (textgen_trigger_node_wait) ---\n{raw_content}\n------------------------------------------------------\n")
+            
+            timestamp = raw_content.strip()
             
             # Clean up the response
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
+            print(f"DEBUG: Extracted Timestamp: {timestamp}")
             
             import json
             return json.dumps({
