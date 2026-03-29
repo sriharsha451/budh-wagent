@@ -42,6 +42,17 @@ class WhatsAppResponse(BaseModel):
     )
 
 
+class ToolParameter(BaseModel):
+    name: str
+    type: str
+
+
+class ToolInfo(BaseModel):
+    tool_name: str
+    description: Optional[str]
+    params: List[ToolParameter]
+
+
 # -------------------------------------------------------
 # 1.1. Validator Instructions
 # -------------------------------------------------------
@@ -262,6 +273,37 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     return final_result
 
 
+def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
+    """Defines and returns the list of tools available for the agent."""
+    
+    @tool(
+        name="merakle_demo_get_service_request_id",
+        description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
+    )
+    async def merakle_demo_get_service_request_id() -> str:
+        """Generic wrapper for service request ID generation."""
+        return await execute_mcp_tool(
+            "merakle_demo_get_service_request_id", 
+            {}, 
+            tool_cache
+        )
+
+    @tool(
+        name="search_knowledge",
+        description="Search knowledgebase for answers to user's queries"
+    )
+    async def search_knowledge(query: str) -> str:
+        """Search knowledgebase for answers to user's queries."""
+        json_res = await search_knowledge_base(campaign_id, query)
+        import json
+        return json.dumps(json_res, indent=2)
+
+    return [
+        merakle_demo_get_service_request_id,
+        search_knowledge
+    ]
+
+
 # -------------------------------------------------------
 # 4. FastAPI App
 # -------------------------------------------------------
@@ -275,6 +317,41 @@ class AgentRequest(BaseModel):
     taskId: Any
     chatHistory: List[Dict[str, str]]
     templateSettings: Dict[str, Any]
+
+
+@app.get("/discover-tools", response_model=List[ToolInfo])
+async def discover_tools_endpoint():
+    """Returns a list of all tools available for the agent."""
+    try:
+        # Get tools using dummy values for metadata extraction
+        agno_tools = get_tools(campaign_id="discovery", tool_cache={})
+        
+        tools_list = []
+        for t in agno_tools:
+            params = []
+            # Inspect parameters if available
+            import inspect
+            func = getattr(t, "function", None) or getattr(t, "entry", None)
+            if func:
+                sig = inspect.signature(func)
+                for name, param in sig.parameters.items():
+                    # Skip 'self' or other common internal params if they somehow appear
+                    params.append(ToolParameter(
+                        name=name,
+                        type=str(param.annotation.__name__) if hasattr(param.annotation, "__name__") else str(param.annotation)
+                    ))
+            
+            tools_list.append(ToolInfo(
+                tool_name=t.name,
+                description=t.description,
+                params=params
+            ))
+        
+        return tools_list
+
+    except Exception as e:
+        logger.exception(f"Error in /discover-tools: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/wa-agent", response_model=WhatsAppResponse)
@@ -298,41 +375,13 @@ async def run_agent_endpoint(request: AgentRequest):
         )
 
         # -------------------------------------------------------
-        # 5. Register Tools (Generic wrappers)
+        # 5. Register Tools
         # -------------------------------------------------------
 
         agno_tools = []
-
         if enable_tools:
             logger.info("Registering MCP-backed tools")
-
-            @tool(
-                name="merakle_demo_get_service_request_id",
-                description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
-            )
-            async def merakle_demo_get_service_request_id() -> str:
-                """Generic wrapper for service request ID generation."""
-                return await execute_mcp_tool(
-                    "merakle_demo_get_service_request_id", 
-                    {}, 
-                    tool_cache
-                )
-
-            @tool(
-                name="search_knowledge",
-                description="Search knowledgebase for answers to user's queries"
-            )
-            async def search_knowledge(query: str) -> str:
-                """Search knowledgebase for answers to user's queries."""
-                campaign_id = str(request.campaignId)
-                json_res = await search_knowledge_base(campaign_id, query)
-                import json
-                return json.dumps(json_res, indent=2)
-
-            agno_tools = [
-                merakle_demo_get_service_request_id,
-                search_knowledge
-            ]
+            agno_tools = get_tools(str(request.campaignId), tool_cache)
 
         # -------------------------------------------------------
         # 6. Initialize Agent
