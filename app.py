@@ -409,7 +409,7 @@ async def run_agent_endpoint(request: AgentRequest):
             tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
-            tool_call_limit=1, # The Agent will not perform more than one tool call.
+            tool_call_limit=5, # Increased limit to allow processing tool results.
 
         )
 
@@ -460,7 +460,7 @@ async def run_agent_endpoint(request: AgentRequest):
                     "Your job is to check the Main Agent's output against the JSON CONSTRAINTS.",
                     "If the output is valid, return it exactly.",
                     "If it is invalid (e.g., both responseText and responseWATemplate are set), "
-                    "use the Conversation History to determine the correct intent and fix the JSON.",
+                    "use the Conversation History and Tool Results to determine the correct intent and fix the JSON.",
                     VALIDATOR_INSTRUCTIONS
                 ],
                 output_schema=WhatsAppResponse,
@@ -472,9 +472,17 @@ async def run_agent_endpoint(request: AgentRequest):
             else:
                 main_output_str = str(response.content)
 
-            # Pass both the history and the output so the validator has context
+            # Capture tool results from the agent's run
+            tool_results_str = ""
+            if hasattr(response, "messages"):
+                for m in response.messages:
+                    if hasattr(m, "role") and m.role == "tool":
+                        tool_results_str += f"Tool Result: {m.content}\n"
+
+            # Pass history, tool results, and the output to the validator
             validation_payload = (
                 f"CONVERSATION HISTORY:\n{full_prompt}\n\n"
+                f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}\n\n"
                 f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
             )
             
@@ -482,14 +490,10 @@ async def run_agent_endpoint(request: AgentRequest):
             
             # Check if the validator successfully produced a valid object
             if isinstance(validated_response.content, WhatsAppResponse):
-                # Basic check: did the validator find a mutual exclusivity violation in the input?
-                # If the validator "fixed" it, we can return. 
-                # (Optional: we could check if it actually changed anything)
                 final_validated_output = validated_response.content
                 logger.info("Validation successful.")
                 break
             else:
-                # If even the validator failed to produce valid JSON, we retry the main agent with a warning
                 current_attempt += 1
                 logger.warning(f"Validation attempt {current_attempt} failed. Retrying main agent...")
                 retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid. Ensure you follow the JSON constraints strictly. Error: {str(validated_response.content)}"
