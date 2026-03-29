@@ -341,7 +341,11 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
             # Clean up the response
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
             
-            return f"Set setNextWaitUntil to {timestamp}"
+            import json
+            return json.dumps({
+                "setNextWaitUntil": timestamp,
+                "instruction": f"Set setNextWaitUntil to {timestamp}"
+            })
         except Exception as e:
             logger.exception(f"Error in textgen_trigger_node_wait: {e}")
             return f"Error updating wait time: {str(e)}"
