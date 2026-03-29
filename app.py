@@ -340,7 +340,8 @@ async def discover_tools_endpoint():
             # Inspect parameters if available
             import inspect
             # Try various attributes Agno might use to store the original function
-            func = getattr(t, "entry", None) or getattr(t, "function", None) or getattr(t, "original_function", None)
+            # entrypoint is common in newer Agno versions
+            func = getattr(t, "entrypoint", None) or getattr(t, "entry", None) or getattr(t, "function", None)
             
             if not func and callable(t):
                 func = t
@@ -351,9 +352,21 @@ async def discover_tools_endpoint():
                     # Skip 'self' or other common internal params
                     if name in ("self", "cls"):
                         continue
+                    # Skip injected Agno params
+                    if name in ("agent", "run_context", "team"):
+                        continue
+                        
                     params.append(ToolParameter(
                         name=name,
                         type=str(param.annotation.__name__) if hasattr(param.annotation, "__name__") else str(param.annotation)
+                    ))
+            elif hasattr(t, "parameters") and isinstance(t.parameters, dict):
+                # Fallback to Agno's internal parameters schema
+                props = t.parameters.get("properties", {})
+                for name, details in props.items():
+                    params.append(ToolParameter(
+                        name=name,
+                        type=details.get("type", "any")
                     ))
             
             tools_list.append(ToolInfo(
