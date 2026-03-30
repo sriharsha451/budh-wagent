@@ -340,6 +340,8 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
         User Query: Timestamp should be equal to {query}. User's Timezone is Indian Standard Time (IST).
 
         Instructions:
+        - First convert Current Date and Time (UTC) to IST.
+        - Then resolve all relative time expressions (e.g., today, tomorrow) in IST before applying any transformations.        
         - Identify the intended future interview date and time from the conversation.
         - Apply the condition specified in the query (e.g., subtract 3 hours from the interview time).
         - Convert the final calculated time from IST to UTC.
