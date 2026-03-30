@@ -312,17 +312,19 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
         description="Extracts a future timestamp from the user's wait criteria. Call this only when instructed by a Step."
     )
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
-        """Extracts a future timestamp from the user's wait criteria. Call this only when instructed by a Step."""
+        """Extracts a future timestamp from the user's query and updates the task's wait time."""
+        print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        
+
         prompt = f"""
         Current Date and Time (UTC): {now_utc}
         User Query: {query}
-        
+
         Extract the intended future timestamp from the user query and convert it to UTC ISO 8601 format (e.g., 2026-03-30T10:00:00Z).
         Return ONLY the timestamp string. No other text. Always output in UTC.
         """
-        
+        print(f"\n--- TOOL FINAL OPENAI PROMPT (textgen_trigger_node_wait) ---\n{prompt}\n----------------------------------------------------------\n")
+
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
