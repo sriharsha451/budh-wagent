@@ -565,6 +565,10 @@ async def run_agent_endpoint(request: AgentRequest):
                 f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}\n\n"
                 f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
             )
+
+            print("\n--- VALIDATION PAYLOAD ---\n")
+            print(validation_payload)
+            print("\n--------------------------\n")
             
             validated_response = await validator_agent.arun(validation_payload)
             
