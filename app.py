@@ -332,13 +332,20 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
             history_str += f"User: {last_msg}"
 
         prompt = f"""
+        You are a timestamp extraction assistant.
+        
         Current Date and Time (UTC): {now_utc}
         {history_str}
 
         User Query: Timestamp should be equal to {query}. User's Timezone is Indian Standard Time (IST).
 
-        Extract the intended future timestamp from the user query and convert it to UTC ISO 8601 format (e.g., 2026-03-30T10:00:00Z).
-        Return ONLY the timestamp string. No other text. Always output in UTC.
+        Instructions:
+        - Identify the intended future interview date and time from the conversation.
+        - Apply the condition specified in the query (e.g., subtract 3 hours from the interview time).
+        - Convert the final calculated time from IST to UTC.
+        - Output the result strictly in ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ.
+        - Return ONLY the timestamp string.
+        - Do NOT include any explanations or extra text.
         """
         print(f"\n--- TOOL FINAL OPENAI PROMPT (textgen_trigger_node_wait) ---\n{prompt}\n----------------------------------------------------------\n")
         headers = {
