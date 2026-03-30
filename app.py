@@ -282,9 +282,9 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     return final_result
 
 
-def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
+def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, str]] = None) -> List[Any]:
     """Defines and returns the list of tools available for the agent."""
-    
+
     @tool(
         name="merakle_demo_get_service_request_id",
         description="Generates a unique 7-digit service request ID. Call this tool only once to get a new ID, and use the ID directly in your response to the user."
@@ -292,8 +292,8 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
     async def merakle_demo_get_service_request_id() -> str:
         """Generic wrapper for service request ID generation."""
         return await execute_mcp_tool(
-            "merakle_demo_get_service_request_id", 
-            {}, 
+            "merakle_demo_get_service_request_id",
+            {},
             tool_cache
         )
 
@@ -309,22 +309,30 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
 
     @tool(
         name="textgen_trigger_node_wait",
-        description="Extracts a future timestamp from the user's wait criteria. Call this only when instructed by a Step."
+        description="Returns a future timestamp based on user's wait criteria. Call this only when instructed by a Step."
     )
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
         """Extracts a future timestamp from the user's query and updates the task's wait time."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+        # Format history for the prompt
+        history_str = ""
+        if chat_history:
+            history_str = "\n".join([f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in chat_history])
+
         prompt = f"""
         Current Date and Time (UTC): {now_utc}
-        User Query: {query}. User's Timezone is Indian Standard Time (IST). 
+
+        Conversation History:
+        {history_str}
+
+        User Query: {query}. User's Timezone is Indian Standard Time (IST).
 
         Extract the intended future timestamp from the user query and convert it to UTC ISO 8601 format (e.g., 2026-03-30T10:00:00Z).
         Return ONLY the timestamp string. No other text. Always output in UTC.
         """
         print(f"\n--- TOOL FINAL OPENAI PROMPT (textgen_trigger_node_wait) ---\n{prompt}\n----------------------------------------------------------\n")
-
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
@@ -466,7 +474,8 @@ async def run_agent_endpoint(request: AgentRequest):
         agno_tools = []
         if enable_tools:
             logger.info("Registering MCP-backed tools")
-            agno_tools = get_tools(str(request.campaignId), tool_cache)
+            agno_tools = get_tools(str(request.campaignId), tool_cache, request.chatHistory)
+            print(f"DEBUG: Registered tools: {agno_tools}")
 
         # -------------------------------------------------------
         # 6. Initialize Agent
