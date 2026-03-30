@@ -318,7 +318,7 @@ def get_tools(campaign_id: str, tool_cache: dict) -> List[Any]:
 
         prompt = f"""
         Current Date and Time (UTC): {now_utc}
-        User Query: {query}
+        User Query: {query}. User's Timezone is Indian Standard Time (IST). 
 
         Extract the intended future timestamp from the user query and convert it to UTC ISO 8601 format (e.g., 2026-03-30T10:00:00Z).
         Return ONLY the timestamp string. No other text. Always output in UTC.
