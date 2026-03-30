@@ -346,7 +346,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "gpt-4o-mini",
+            "model": "gpt-4.1-mini",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0
         }
