@@ -319,15 +319,23 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
         # Format history for the prompt
         history_str = ""
         if chat_history:
-            history_str = "\n".join([f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in chat_history])
+            start_index = 0
+            if chat_history[0].get("role") == "system":
+                start_index = 1
+            
+            history_str += "\n\nConversation History:\n"
+            for msg in chat_history[start_index:-1]:
+                role = msg.get("role", "user").title()
+                history_str += f"{role}: {msg.get('content')}\n"
+
+            last_msg = chat_history[-1]["content"] if chat_history else "Hi"
+            history_str += f"User: {last_msg}"
 
         prompt = f"""
         Current Date and Time (UTC): {now_utc}
-
-        Conversation History:
         {history_str}
 
-        User Query: {query}. User's Timezone is Indian Standard Time (IST).
+        User Query: Timestamp should be equal to {query}. User's Timezone is Indian Standard Time (IST).
 
         Extract the intended future timestamp from the user query and convert it to UTC ISO 8601 format (e.g., 2026-03-30T10:00:00Z).
         Return ONLY the timestamp string. No other text. Always output in UTC.
