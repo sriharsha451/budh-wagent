@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.tools import tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -314,7 +314,11 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
         """Extracts a future timestamp from the user's query and updates the task's wait time."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
-        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        today_date = ist_now.strftime("%Y-%m-%d")
+        tomorrow_date = (ist_now + timedelta(days=1)).strftime("%Y-%m-%d")
+        current_date_time = ist_now.strftime("%Y-%m-%dT%H:%M:%S")
 
         # Format history for the prompt
         history_str = ""
@@ -332,19 +336,21 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
             history_str += f"User: {last_msg}"
 
         prompt = f"""
-        
-        Current Date and Time (UTC): {now_utc}
+                
+        Current Date and Time : {current_date_time}
+        Today's Date : {today_date}
+        Tomorrow's Date : {tomorrow_date}
+
         {history_str}
 
-        User Query: Timestamp should be equal to {query}. User's Timezone is Indian Standard Time (IST).
+        User Query: Timestamp in final output should be equal to {query}. 
 
         Instructions:
-        - First convert Current Date and Time (UTC) to IST.
-        - Then resolve all relative time expressions (e.g., today, tomorrow) in IST before applying any transformations.        
+        - Resolve all relative time expressions (e.g., today, tomorrow).
         - Identify the intended future interview date and time from the conversation.
         - Apply the condition specified in the query (e.g., subtract 3 hours from the interview time).
-        - Convert the final calculated time from IST to UTC.
-        - Output the result strictly in ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ.
+        - Output the final result.
+        - Output format: YYYY-MM-DDTHH:MM:SS (No 'Z' suffix).
         - Return ONLY the timestamp string.
         - Do NOT include any explanations or extra text.
         """
@@ -359,7 +365,8 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
                 {
                     "role": "system",
                     "content": """You are a strict timestamp extraction and calculation assistant.
-
+        Understand the user's query and use the conversation history and information regarding current date, time and tomorrow's date to come up with the requrired output as 
+        per instructions provided.
         Follow instructions EXACTLY. Do not skip steps. Do not infer missing data."""
                 },
                 {"role": "user", "content": prompt}
