@@ -332,7 +332,6 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
             history_str += f"User: {last_msg}"
 
         prompt = f"""
-        You are a timestamp extraction assistant.
         
         Current Date and Time (UTC): {now_utc}
         {history_str}
@@ -356,9 +355,18 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, s
         }
         payload = {
             "model": "gpt-4.1-mini",
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": """You are a strict timestamp extraction and calculation assistant.
+
+        Follow instructions EXACTLY. Do not skip steps. Do not infer missing data."""
+                },
+                {"role": "user", "content": prompt}
+            ],
             "temperature": 0
         }
+
         
         try:
             resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
