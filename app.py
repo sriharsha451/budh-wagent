@@ -37,6 +37,7 @@ class WhatsAppResponse(BaseModel):
     waTemplateContent: Optional[str] = Field(None, description="Whatsapp template content, if applicable")
     fileAssetId: Optional[str] = Field(None, description="Asset ID of file to send the user, if applicable")
     setNextWaitUntil: Optional[str] = Field(None, description="The timestamp to wait until before the next action, in ISO 8601 UTC format (e.g., '2026-03-30T10:00:00Z').")
+    isYesOrNoQuestion: bool = Field(False, description="Set to true if the responseText is a question that expects a yes or no answer.")
     isEndOfConversation: bool = Field(
         False, 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
@@ -74,6 +75,7 @@ OUTPUT JSON CONSTRAINTS:
         "waTemplateContent": "string | null",
         "fileAssetId": "string | null",
         "setNextWaitUntil": "string | null",
+        "isYesOrNoQuestion": false,
         "isEndOfConversation": true
         }
 
@@ -87,6 +89,7 @@ OUTPUT JSON CONSTRAINTS:
         * "waTemplateContent" -> Rendered message content for the template
         * "fileAssetId" -> Use ONLY when sending a file to the user
         * "setNextWaitUntil" -> Use only when setting a future wait time (ISO 8601 UTC format)
+        * "isYesOrNoQuestion" -> true if the responseText is a question that expects a yes or no answer, otherwise false
         * "isEndOfConversation" -> true only when the conversation is fully complete, otherwise false
 
         ---
