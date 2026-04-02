@@ -37,6 +37,7 @@ class WhatsAppResponse(BaseModel):
     waTemplateContent: Optional[str] = Field(None, description="Whatsapp template content, if applicable")
     fileAssetId: Optional[str] = Field(None, description="Asset ID of file to send the user, if applicable")
     setNextWaitUntil: Optional[str] = Field(None, description="The timestamp to wait until before the next action, in ISO 8601 UTC format (e.g., '2026-03-30T10:00:00Z').")
+    quickReplyOptions: List[str] = Field(default_factory=list, description="An array of strings representing quick reply buttons for the user, if applicable")
     isYesOrNoQuestion: bool = Field(False, description="Set to true if the responseText is a question that expects a yes or no answer.")
     isEndOfConversation: bool = Field(
         False, 
@@ -75,6 +76,7 @@ OUTPUT JSON CONSTRAINTS:
         "waTemplateContent": "string | null",
         "fileAssetId": "string | null",
         "setNextWaitUntil": "string | null",
+        "quickReplyOptions": ["string"],
         "isYesOrNoQuestion": false,
         "isEndOfConversation": true
         }
@@ -89,6 +91,7 @@ OUTPUT JSON CONSTRAINTS:
         * "waTemplateContent" -> Rendered message content for the template
         * "fileAssetId" -> Use ONLY when sending a file to the user
         * "setNextWaitUntil" -> Use only when setting a future wait time (ISO 8601 UTC format)
+        * "quickReplyOptions" -> Use when providing buttons/options for the user to select. Always return an array (use [] if not applicable).
         * "isYesOrNoQuestion" -> true if the responseText is a question that expects a yes or no answer, otherwise false
         * "isEndOfConversation" -> true only when the conversation is fully complete, otherwise false
 
@@ -118,7 +121,7 @@ OUTPUT JSON CONSTRAINTS:
         * Always include ALL fields in every response
         * Do NOT remove or rename any fields
         * Use null for fields that are not applicable
-        * "waTemplateParams" must always be an array (never null)
+        * "waTemplateParams" and "quickReplyOptions" must always be an array (never null)
         * Do NOT include any extra fields
         * Do NOT include any text outside the JSON
         * Ensure valid JSON (double quotes only, no trailing commas)
@@ -151,6 +154,7 @@ OUTPUT JSON CONSTRAINTS:
     "waTemplateContent": null,
     "fileAssetId": null,
     "setNextWaitUntil": null,
+    "quickReplyOptions": [],
     "isEndOfConversation": false
     }
 
@@ -165,6 +169,7 @@ OUTPUT JSON CONSTRAINTS:
     "waTemplateContent": "Thanks Alex, would you like to know about Textgen?",
     "fileAssetId": null,
     "setNextWaitUntil": "2026-03-30T10:00:00Z",
+    "quickReplyOptions": ["Yes", "No"],
     "isEndOfConversation": false
     }
 
