@@ -19,6 +19,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 KNOWLEDGE_API_ENDPOINT = os.getenv("KNOWLEDGE_API_ENDPOINT")
 KNOWLEDGE_API_KEY = os.getenv("KNOWLEDGE_API_KEY")
 MCP_SERVER_URL = "https://api.merakle.ai/v1/b/mcp/messages"
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 # Reusable HTTP client
 http_client = httpx.AsyncClient(timeout=30)
@@ -368,7 +369,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "gpt-4.1-mini",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {
                     "role": "system",
@@ -499,7 +500,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
         # Extract settings
         ts = request.templateSettings
-        model_id = ts.get("model", "gpt-4.1-mini")
+        model_id = ts.get("model", DEFAULT_MODEL)
         temperature = ts.get("temperature", 0)
         base_prompt = ts.get("callprompt", "You are a helpful assistant.")
 
@@ -597,7 +598,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Validator Agent (Attempt {current_attempt + 1})...")
             
             validator_agent = Agent(
-                model=OpenAIChat(id="gpt-4.1-mini", api_key=OPENAI_API_KEY, temperature=0),
+                model=OpenAIChat(id=DEFAULT_MODEL, api_key=OPENAI_API_KEY, temperature=0),
                 instructions=[
                     "You are a strict output validator.",
                     "Your job is to check the Main Agent's output against the JSON CONSTRAINTS.",
