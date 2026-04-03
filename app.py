@@ -517,26 +517,36 @@ async def run_agent_endpoint(request: AgentRequest):
             agno_tools = get_tools(str(request.campaignId), tool_cache, request.chatHistory)
             print(f"DEBUG: Registered tools: {agno_tools}")
 
+        # Extract system instruction from chat history if present
+        system_content = ""
+        start_index = 0
+        if request.chatHistory and request.chatHistory[0].get("role") == "system":
+            system_content = request.chatHistory[0].get("content", "")
+            start_index = 1
+
         # -------------------------------------------------------
         # 6. Initialize Agent
         # -------------------------------------------------------
+
+        agent_instructions = [
+            base_prompt,
+            f"System Context: {system_content}" if system_content else None,
+            "Respond naturally to the user.",
+            "Use tools when necessary.",
+            "If a tool fails, inform the user and move on.",
+            "Do not retry a tool more than once."
+        ]
+        # Filter out None values
+        agent_instructions = [i for i in agent_instructions if i]
 
         agent = Agent(
             model=OpenAIChat(
                 id=model_id,
                 api_key=OPENAI_API_KEY,
-                temperature=temperature
+                temperature=temperature,
+                # cache_system_prompt=True
             ),
-            instructions=[
-                base_prompt,
-                f"The current date and time is {datetime.now()}.",
-                f"The merakle_call_id for this call is {task_id}.",
-                f"The merakle_account_id for this call is {account_id}.",
-                "Respond naturally to the user.",
-                "Use tools when necessary.",
-                "If a tool fails, inform the user and move on.",
-                "Do not retry a tool more than once."
-            ],
+            instructions=agent_instructions,
             tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
@@ -548,14 +558,7 @@ async def run_agent_endpoint(request: AgentRequest):
         # 7. Format Chat History
         # -------------------------------------------------------
 
-        chat_history_text = ""
-        start_index = 0
-
-        if request.chatHistory and request.chatHistory[0].get("role") == "system":
-            chat_history_text += f"System Instructions: {request.chatHistory[0]['content']}\n\n"
-            start_index = 1
-        
-        chat_history_text += "\n\nConversation History:\n"
+        chat_history_text = "\n\nConversation History:\n"
 
         for msg in request.chatHistory[start_index:-1]:
             role = msg.get("role", "user").title()
@@ -563,7 +566,15 @@ async def run_agent_endpoint(request: AgentRequest):
 
         last_msg = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
 
-        full_prompt = chat_history_text + f"User: {last_msg}"
+        # Dynamic context moved here to improve prompt caching of the system instructions
+        dynamic_context = (
+            f"\n\nAdditional Context:\n"
+            f"- The merakle_call_id for this call is {task_id}.\n"
+            f"- The merakle_account_id for this call is {account_id}.\n"
+            f"- The current date and time is {datetime.now()}.\n"
+        )
+
+        full_prompt = chat_history_text + dynamic_context + f"\nUser: {last_msg}"
 
         print("\n--- FINAL PROMPT ---\n")
         print(full_prompt)
