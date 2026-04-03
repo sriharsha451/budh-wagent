@@ -531,7 +531,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
         agent_instructions = [
             base_prompt,
-            f"System Context: {system_content}" if system_content else None,
+            f"System Instructions: {system_content}" if system_content else None,
             "Respond naturally to the user.",
             "Use tools when necessary.",
             "If a tool fails, inform the user and move on.",
@@ -624,12 +624,13 @@ async def run_agent_endpoint(request: AgentRequest):
                         tool_results_str += f"Tool Result: {m.content}\n"
 
             # Pass history, tool results, and the output to the validator
-            validation_payload = (
-                f"System Context: {system_content}" if system_content else None,
-                f"CONVERSATION HISTORY:\n{full_prompt}\n\n"
-                f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}\n\n"
+            validation_payload = [
+                f"System Instructions: {system_content}" if system_content else None,
+                f"CONVERSATION HISTORY:\n{full_prompt}",
+                f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}",
                 f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
-            )
+            ]
+            validation_payload = "\n\n".join([v for v in validation_payload if v])
 
             print("\n--- VALIDATION PAYLOAD ---\n")
             print(validation_payload)
