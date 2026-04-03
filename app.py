@@ -290,7 +290,7 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     return final_result
 
 
-def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, str]] = None) -> List[Any]:
+def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, Any]] = None) -> List[Any]:
     """Defines and returns the list of tools available for the agent."""
 
     @tool(
@@ -423,7 +423,7 @@ class AgentRequest(BaseModel):
     accountId: Any
     campaignId: Any
     taskId: Any
-    chatHistory: List[Dict[str, str]]
+    chatHistory: List[Dict[str, Any]]
     templateSettings: Dict[str, Any]
 
 
