@@ -625,6 +625,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
             # Pass history, tool results, and the output to the validator
             validation_payload = (
+                f"System Context: {system_content}" if system_content else None,
                 f"CONVERSATION HISTORY:\n{full_prompt}\n\n"
                 f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}\n\n"
                 f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
