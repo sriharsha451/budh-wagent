@@ -568,13 +568,14 @@ async def run_agent_endpoint(request: AgentRequest):
 
         # Dynamic context moved here to improve prompt caching of the system instructions
         dynamic_context = (
+            f"\n----------------------------\n"
             f"\n\nAdditional Context:\n"
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
             f"- The current date and time is {datetime.now()}.\n"
         )
 
-        full_prompt = chat_history_text + dynamic_context + f"\nUser: {last_msg}"
+        full_prompt = chat_history_text  + f"User: {last_msg}" + dynamic_context
 
         print("\n--- FINAL PROMPT ---\n")
         print(full_prompt)
