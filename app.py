@@ -500,7 +500,8 @@ async def run_agent_endpoint(request: AgentRequest):
         task_id = str(request.taskId)
         account_id = str(request.accountId)
         current_node = str(request.currentNode)
-        logger.info(f"--- New Request: Task {task_id} ---")
+        camp_id = str(request.campaignId)
+        logger.info(f"--- New Request: Task {task_id} and campaign id {camp_id}---")
 
         # Request-scoped tool cache
         tool_cache = {}
@@ -580,6 +581,7 @@ async def run_agent_endpoint(request: AgentRequest):
             f"\n\nAdditional Context:\n"
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
+            f"- The campaign_id for this call is {camp_id}.\n"            
             f"- The current date and time is {datetime.now()}.\n"
             f"- CURRENT NODE: {current_node}.\n"
         )
