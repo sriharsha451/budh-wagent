@@ -38,6 +38,7 @@ class WhatsAppResponse(BaseModel):
     waTemplateContent: Optional[str] = Field(None, description="Whatsapp template content, if applicable")
     fileAssetId: Optional[str] = Field(None, description="Asset ID of file to send the user, if applicable")
     setNextWaitUntil: Optional[str] = Field(None, description="The timestamp to wait until before the next action, in ISO 8601 UTC format (e.g., '2026-03-30T10:00:00Z').")
+    nextNode: Optional[str] = Field(None, description="The ID of the next node to transition to, if applicable")
     quickReplyOptions: List[str] = Field(default_factory=list, description="An array of strings representing quick reply buttons for the user, if applicable")
     isYesOrNoQuestion: bool = Field(False, description="Set to true if the responseText is a question that expects a yes or no answer.")
     isEndOfConversation: bool = Field(
@@ -77,6 +78,7 @@ OUTPUT JSON CONSTRAINTS:
         "waTemplateContent": "string | null",
         "fileAssetId": "string | null",
         "setNextWaitUntil": "string | null",
+        "nextNode": "string | null",
         "quickReplyOptions": ["string"],
         "isYesOrNoQuestion": false,
         "isEndOfConversation": true
@@ -92,6 +94,7 @@ OUTPUT JSON CONSTRAINTS:
         * "waTemplateContent" -> Rendered message content for the template
         * "fileAssetId" -> Use ONLY when sending a file to the user
         * "setNextWaitUntil" -> Use only when setting a future wait time (ISO 8601 UTC format)
+        * "nextNode" -> The ID of the next node to transition to, if applicable
         * "quickReplyOptions" -> Use when providing buttons/options for the user to select. Always return an array (use [] if not applicable).
         * "isYesOrNoQuestion" -> true if the responseText is a question that expects a yes or no answer, otherwise false
         * "isEndOfConversation" -> true only when the conversation is fully complete, otherwise false
@@ -155,6 +158,7 @@ OUTPUT JSON CONSTRAINTS:
     "waTemplateContent": null,
     "fileAssetId": null,
     "setNextWaitUntil": null,
+    "nextNode": null,
     "quickReplyOptions": [],
     "isEndOfConversation": false
     }
@@ -170,6 +174,7 @@ OUTPUT JSON CONSTRAINTS:
     "waTemplateContent": "Thanks Alex, would you like to know about Textgen?",
     "fileAssetId": null,
     "setNextWaitUntil": "2026-03-30T10:00:00Z",
+    "nextNode": "Logic Node #1",
     "quickReplyOptions": ["Yes", "No"],
     "isEndOfConversation": false
     }
@@ -424,6 +429,7 @@ class AgentRequest(BaseModel):
     accountId: Any
     campaignId: Any
     taskId: Any
+    currentNode: Any
     chatHistory: List[Dict[str, Any]]
     templateSettings: Dict[str, Any]
 
@@ -493,6 +499,7 @@ async def run_agent_endpoint(request: AgentRequest):
     try:
         task_id = str(request.taskId)
         account_id = str(request.accountId)
+        current_node = str(request.currentNode)
         logger.info(f"--- New Request: Task {task_id} ---")
 
         # Request-scoped tool cache
@@ -574,6 +581,7 @@ async def run_agent_endpoint(request: AgentRequest):
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
             f"- The current date and time is {datetime.now()}.\n"
+            f"- CURRENT NODE: {current_node}.\n"
         )
 
         full_prompt = chat_history_text  + f"User: {last_msg}" + dynamic_context
