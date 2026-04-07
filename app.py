@@ -64,9 +64,9 @@ class ToolInfo(BaseModel):
 
 VALIDATOR_INSTRUCTIONS = """
 OUTPUT JSON CONSTRAINTS:
-  1) In output json, responseText and responseWATemplate are mutually exclusive props. 
-     Only 1 can be set at a time. 
-     If responseWATemplate is set then waTemplateParams and waTemplateContent also needs to be set.
+  1) In output JSON, `responseText` and `responseWATemplate` are mutually exclusive props. 
+     Only one can be set at a time. 
+     If `responseWATemplate` is set, then `waTemplateParams` and `waTemplateContent` must also be set.
   2) Always return a structured JSON object in the following exact format:
 
         {
@@ -83,7 +83,6 @@ OUTPUT JSON CONSTRAINTS:
         "isYesOrNoQuestion": false,
         "isEndOfConversation": true
         }
-
 
         ### Field Rules:
 
@@ -107,16 +106,18 @@ OUTPUT JSON CONSTRAINTS:
         * If "responseText" is NOT null -> "responseWATemplate" MUST be null
         * If "responseWATemplate" is NOT null -> "responseText" MUST be null
         * NEVER set both fields at the same time
-        * NEVER leave both as null unless only sending file or save_data without user message
+        * NEVER leave both as null unless only sending a file or save_data without user message
+        * **One of `responseText` or `responseWATemplate` MUST be set.** 
+        * If **both** `responseText` and `responseWATemplate` are empty, **set `fileAssetId` instead**.
 
         ---
 
         ### 📁 File Handling Rule (VERY IMPORTANT):
-        "fileAssetId" must be set ONLY when the AI is sending a file to the user
+        "fileAssetId" must be set ONLY when the AI is sending a file to the user.
         If the user sends a file:
-        DO NOT copy or reuse that file ID
-        DO NOT set "fileAssetId" unless explicitly responding with a file
-        In all other cases, set "fileAssetId" to null          
+        DO NOT copy or reuse that file ID.
+        DO NOT set "fileAssetId" unless explicitly responding with a file.
+        In all other cases, set "fileAssetId" to null.          
 
         --- 
 
@@ -163,7 +164,6 @@ OUTPUT JSON CONSTRAINTS:
     "isEndOfConversation": false
     }
 
-
     ✅ Valid (Template response):
     {
     "responseText": null,
@@ -179,6 +179,20 @@ OUTPUT JSON CONSTRAINTS:
     "isEndOfConversation": false
     }
 
+    ✅ Valid (File response - fileAssetId set when both `responseText` and `responseWATemplate` are empty):
+    {
+    "responseText": null,
+    "responseWATemplate": null,
+    "saveDataVariable": null,
+    "saveDataValue": null,
+    "waTemplateParams": [],
+    "waTemplateContent": null,
+    "fileAssetId": "file_12345abcd",
+    "setNextWaitUntil": null,
+    "nextNode": null,
+    "quickReplyOptions": [],
+    "isEndOfConversation": false
+    }
 
     ❌ Invalid (DO NOT DO THIS):
     {
@@ -640,7 +654,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
             # Pass history, tool results, and the output to the validator
             validation_payload = [
-                f"System Instructions: {system_content}" if system_content else None,
+                # f"System Instructions: {system_content}" if system_content else None,
                 f"CONVERSATION HISTORY:\n{full_prompt}",
                 f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}",
                 f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
