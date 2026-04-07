@@ -296,7 +296,7 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     return final_result
 
 
-def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, Any]] = None) -> List[Any]:
+def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, Any]] = None, default_model: str = DEFAULT_MODEL) -> List[Any]:
     """Defines and returns the list of tools available for the agent."""
 
     @tool(
@@ -374,7 +374,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             "Content-Type": "application/json"
         }
         payload = {
-            "model": DEFAULT_MODEL,
+            "model": default_model,
             "messages": [
                 {
                     "role": "system",
@@ -508,11 +508,16 @@ async def run_agent_endpoint(request: AgentRequest):
 
         # Extract settings
         ts = request.templateSettings
-        model_id = ts.get("model", DEFAULT_MODEL)
+        campaign_settings = ts.get("campaign_settings", {})
+        
+        # Use LLM model from campaign settings if present, else fallback to global DEFAULT_MODEL
+        default_model = ts.get("model") or campaign_settings.get("use_llm_model") or DEFAULT_MODEL
+        print(f"DEBUG: Using model: {default_model}")
+        
         temperature = ts.get("temperature", 0)
         base_prompt = ts.get("callprompt", "You are a helpful assistant.")
 
-        enable_tools = ts.get("campaign_settings", {}).get(
+        enable_tools = campaign_settings.get(
             "enable_merakle_knowledge", False
         )
 
@@ -523,7 +528,7 @@ async def run_agent_endpoint(request: AgentRequest):
         agno_tools = []
         if enable_tools:
             logger.info("Registering MCP-backed tools")
-            agno_tools = get_tools(str(request.campaignId), tool_cache, request.chatHistory)
+            agno_tools = get_tools(str(request.campaignId), tool_cache, request.chatHistory, default_model)
             print(f"DEBUG: Registered tools: {agno_tools}")
 
         # Extract system instruction from chat history if present
@@ -550,7 +555,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
         agent = Agent(
             model=OpenAIChat(
-                id=model_id,
+                id=default_model,
                 api_key=OPENAI_API_KEY,
                 temperature=temperature,
                 # cache_system_prompt=True
@@ -608,7 +613,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Validator Agent (Attempt {current_attempt + 1})...")
             
             validator_agent = Agent(
-                model=OpenAIChat(id=DEFAULT_MODEL, api_key=OPENAI_API_KEY, temperature=0),
+                model=OpenAIChat(id=default_model, api_key=OPENAI_API_KEY, temperature=0),
                 instructions=[
                     "You are a strict output validator.",
                     "Your job is to check the Main Agent's output against the JSON CONSTRAINTS.",
