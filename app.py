@@ -313,20 +313,20 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
 
     @tool(
         name="search_knowledge",
-        description="Search knowledgebase for answers to user's queries"
+        description="Searches the knowledgebase for answers to the user's query. This tool should be invoked only when the user asks for information that requires searching the knowledgebase."
     )
     async def search_knowledge(query: str) -> str:
-        """Search knowledgebase for answers to user's queries."""
+        """Searches the knowledgebase for answers to the user's query. This tool should be invoked only when the user asks for information that requires searching the knowledgebase."""
         json_res = await search_knowledge_base(campaign_id, query)
         import json
         return json.dumps(json_res, indent=2)
 
     @tool(
         name="textgen_trigger_node_wait",
-        description="Returns a future timestamp based on user's wait criteria. Call this only when instructed by a Step."
+        description="Returns a future timestamp based on the user's specified wait criteria. This tool should only be called when explicitly instructed by a Step in the workflow."
     )
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
-        """Extracts a future timestamp from the user's query and updates the task's wait time."""
+        """Returns a future timestamp based on the user's specified wait criteria. This tool should only be called when explicitly instructed by a Step in the workflow."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
         
         ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
