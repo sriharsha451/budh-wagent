@@ -671,6 +671,7 @@ async def run_agent_endpoint(request: AgentRequest):
             if isinstance(validated_response.content, WhatsAppResponse):
                 final_validated_output = validated_response.content
                 logger.info("Validation successful.")
+                print(f"DEBUG: Final Validated Output: {final_validated_output.model_dump_json(indent=2)}")
                 break
             else:
                 current_attempt += 1
