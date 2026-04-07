@@ -578,6 +578,7 @@ async def run_agent_endpoint(request: AgentRequest):
             tools=agno_tools,
             output_schema=WhatsAppResponse,
             markdown=False,
+            debug_mode=True,
             tool_call_limit=5, # Increased limit to allow processing tool results.
 
         )
@@ -628,6 +629,7 @@ async def run_agent_endpoint(request: AgentRequest):
             
             validator_agent = Agent(
                 model=OpenAIChat(id=default_model, api_key=OPENAI_API_KEY, temperature=0),
+                debug_mode=True,
                 instructions=[
                     "You are a strict output validator.",
                     "Your job is to check the Main Agent's output against the JSON CONSTRAINTS.",
