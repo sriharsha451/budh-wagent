@@ -42,9 +42,15 @@ class WhatsAppResponse(BaseModel):
     quickReplyOptions: List[str] = Field(default_factory=list, description="An array of strings representing quick reply buttons for the user, if applicable")
     isYesOrNoQuestion: bool = Field(False, description="Set to true if the responseText is a question that expects a yes or no answer.")
     isEndOfConversation: bool = Field(
-        False,
+        False, 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
+
+
+class ValidationResult(BaseModel):
+    is_valid: bool = Field(..., description="Set to true if the Main Agent's output follows all JSON CONSTRAINTS and logical rules (or if you can fix it with simple adjustments).")
+    critique: Optional[str] = Field(None, description="If the output is invalid and cannot be easily fixed, provide a detailed explanation of the violations.")
+    fixed_response: Optional[WhatsAppResponse] = Field(None, description="The final, corrected WhatsAppResponse object. ALWAYS populate this with the best possible version of the output.")
 
 
 class ToolParameter(BaseModel):
@@ -59,94 +65,70 @@ class ToolInfo(BaseModel):
 
 
 # -------------------------------------------------------
-# 1.1. Deterministic Validation Logic
+# 1.1. Validator Instructions
 # -------------------------------------------------------
 
-def validate_and_fix_response(response_content: Any, current_node: str = "") -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
-    """
-    Validates the WhatsAppResponse object, applies auto-fixes for common issues,
-    and returns a critique if critical constraints are violated.
-    """
-    if not isinstance(response_content, WhatsAppResponse):
-        try:
-            # Try to parse if it's a dict or string
-            if isinstance(response_content, str):
-                import json
-                response_content = WhatsAppResponse.model_validate_json(response_content)
-            elif isinstance(response_content, dict):
-                response_content = WhatsAppResponse.model_validate(response_content)
-            else:
-                return None, False, f"Expected WhatsAppResponse object, got {type(response_content).__name__}"
-        except Exception as e:
-            return None, False, f"Failed to parse response into WhatsAppResponse schema: {str(e)}"
+VALIDATOR_INSTRUCTIONS = """
+OUTPUT JSON RULES:
 
-    # --- 1. Auto-Fixes & Normalization ---
+1) Response Type (Required):
+   - Exactly ONE of the following must be set (non-empty):
+     • responseText
+     • responseWATemplate
+   - If BOTH are null/empty → fileAssetId MUST be set
+    
+2) WhatsApp Template Rule:
+   - If responseWATemplate is set (non-empty):
+     • waTemplateParams MUST be provided (array)
+     • waTemplateContent MUST be provided (non-empty)
 
-    # Normalize empty strings to None for specific fields
-    string_fields = [
-        "responseText", "responseWATemplate", "saveDataVariable",
-        "saveDataValue", "waTemplateContent", "fileAssetId",
-        "setNextWaitUntil", "nextNode"
-    ]
-    for field in string_fields:
-        val = getattr(response_content, field)
-        if val == "":
-            setattr(response_content, field, None)
+3) JSON Format (Always return ALL fields):
 
-    # Ensure list fields are lists
-    if response_content.waTemplateParams is None:
-        response_content.waTemplateParams = []
-    if response_content.quickReplyOptions is None:
-        response_content.quickReplyOptions = []
+{
+  "responseText": "string | null",
+  "responseWATemplate": "string | null",
+  "saveDataVariable": "string | null",
+  "saveDataValue": "string | null",
+  "waTemplateParams": ["string"],
+  "waTemplateContent": "string | null",
+  "fileAssetId": "string | null",
+  "setNextWaitUntil": "string | null",
+  "nextNode": "string | null",
+  "quickReplyOptions": ["string"],
+  "isYesOrNoQuestion": false,
+  "isEndOfConversation": true
+}
 
-    # --- 2. Logical Validation ---
+4) Field Usage:
+   - responseText → plain message
+   - responseWATemplate → WhatsApp template ID
+   - saveDataVariable + saveDataValue → must be used together
+   - waTemplateParams → always array (use [] if none)
+   - quickReplyOptions → always array (use [] if none)
+   - fileAssetId → ONLY when sending a file
+   - setNextWaitUntil → ISO 8601 UTC format
+   - isYesOrNoQuestion → true only for yes/no questions
 
-    critical_errors = []
+5) File Rules:
+   - Only set fileAssetId when sending a file
+   - Never reuse user-uploaded file IDs
+   - Otherwise keep it null
 
-    # A. Mutual Exclusivity: responseText vs responseWATemplate
-    has_text = bool(response_content.responseText)
-    has_template = bool(response_content.responseWATemplate)
+6) Strict Constraints:
+   - Always include ALL fields
+   - No extra fields
+   - No text outside JSON
+   - Valid JSON only (double quotes, no trailing commas)
 
-    # if has_text and has_template:
-    #     critical_errors.append("Both 'responseText' and 'responseWATemplate' are set. They are mutually exclusive. Use only one.")
+7) Data Saving:
+   - If instructed, MUST set saveDataVariable and saveDataValue exactly
 
-    # B. Minimum Response Requirement
-    has_file = bool(response_content.fileAssetId)
-    has_save = bool(response_content.saveDataVariable)
+8) Stateless Responses:
+   - Each response is independent
+   - Do not reuse previous values
+   - Reset unused fields to null or []
 
-    if (not (has_text or has_template)) and not (has_save):
-        critical_errors.append("You must provide a value for 'responseText', 'responseWATemplate'. Both the params cannot be NULL or empty string at the same time. ")
-        # D. Decision Node Rules
-        if "Decision" in current_node:
-            critical_errors.append(
-                "DECISION NODE RULE VIOLATION:\n"
-                "- Evaluate user input and choose EXACTLY ONE path.\n"
-                "- Once a path is selected, you MUST immediately execute the TARGET NODE in the SAME turn.\n"
-                "- Do NOT stop at the decision node (set 'nextNode' to the target node).\n"
-                "- The decision node itself should NOT produce user-facing output; the response MUST come from the executed target node.\n"
-                "- If input is unclear, use fallback path and execute fallback node immediately."
-            )
-
-    #if has_save:
-    #    critical_errors.append("Data is saved. Immediately proceed to next node as per conversation flow.")
-
-    if has_file and not (has_text or has_template):
-        critical_errors.append("You have provided 'fileAssetId' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' with appropriate message to communicate with the user while sending file.")
-
-    # C. Template Integrity
-    if has_template and not response_content.waTemplateContent:
-        critical_errors.append("'responseWATemplate' is provided but 'waTemplateContent' is missing. You must provide the rendered content of the template.")
-
-    print(f"DEBUG: Current Node is a Decision Node: {current_node}")
-
-
-    # --- 3. Final Result ---
-
-    if critical_errors:
-        critique = "The output is invalid due to the following reasons: \n- " + "\n- ".join(critical_errors)
-        return response_content, False, critique
-
-    return response_content, True, None
+"""
 
 # -------------------------------------------------------
 # 2. MCP Bridge Logic
@@ -213,7 +195,7 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     # Create a unique cache key based on tool name and arguments
     import json
     cache_key = f"{name}:{json.dumps(arguments, sort_keys=True)}"
-
+    
     if cache_key in cache:
         logger.info(f"Cache HIT for tool: {name}")
         return cache[cache_key]
@@ -239,10 +221,10 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     if isinstance(mcp_result, dict):
         # Check for 'content' (standard MCP), then 'id', 'output', 'result', etc.
         result_data = (
-            mcp_result.get("content") or
-            mcp_result.get("id") or
-            mcp_result.get("output") or
-            mcp_result.get("result") or
+            mcp_result.get("content") or 
+            mcp_result.get("id") or 
+            mcp_result.get("output") or 
+            mcp_result.get("result") or 
             mcp_result
         )
     else:
@@ -250,7 +232,7 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
 
     # 3. Convert to a clean string for the LLM
     final_result = str(result_data)
-
+    
     # Store in cache and return
     cache[cache_key] = final_result
     return final_result
@@ -288,7 +270,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
         """Returns a future timestamp based on the user's specified wait criteria. This tool should only be called when explicitly instructed by a Step in the workflow."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
-
+        
         ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         today_date = ist_now.strftime("%Y-%m-%d")
         tomorrow_date = (ist_now + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -300,25 +282,24 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             start_index = 0
             if chat_history[0].get("role") == "system":
                 start_index = 1
-
+            
             history_str += "\n\nConversation History:\n"
             for msg in chat_history[start_index:-1]:
                 role = msg.get("role", "user").title()
                 history_str += f"{role}: {msg.get('content')}\n"
 
-            last_msg_content = chat_history[-1]["content"] if chat_history else "Hi"
-            last_msg_role = chat_history[-1].get("role", "user").title() if chat_history else "User"
-            history_str += f"{last_msg_role}: {last_msg_content}"
+            last_msg = chat_history[-1]["content"] if chat_history else "Hi"
+            history_str += f"User: {last_msg}"
 
         prompt = f"""
-
+                
         Current Date and Time : {current_date_time}
         Today's Date : {today_date}
         Tomorrow's Date : {tomorrow_date}
 
         {history_str}
 
-        User Query: Timestamp in final output should be equal to {query}.
+        User Query: Timestamp in final output should be equal to {query}. 
 
         Instructions:
         - Resolve all relative time expressions (e.g., today, tomorrow).
@@ -335,12 +316,12 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "gpt-4.1-mini",
+            "model": default_model,
             "messages": [
                 {
                     "role": "system",
                     "content": """You are a strict timestamp extraction and calculation assistant.
-        Understand the user's query and use the conversation history and information regarding current date, time and tomorrow's date to come up with the requrired output as
+        Understand the user's query and use the conversation history and information regarding current date, time and tomorrow's date to come up with the requrired output as 
         per instructions provided.
         Follow instructions EXACTLY. Do not skip steps. Do not infer missing data."""
                 },
@@ -349,20 +330,20 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             "temperature": 0
         }
 
-
+        
         try:
             resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
             resp.raise_for_status()
-
+            
             raw_content = resp.json()["choices"][0]["message"]["content"]
             print(f"\n--- OPENAI RAW RESPONSE (textgen_trigger_node_wait) ---\n{raw_content}\n------------------------------------------------------\n")
-
+            
             timestamp = raw_content.strip()
-
+            
             # Clean up the response
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
             print(f"DEBUG: Extracted Timestamp: {timestamp}")
-
+            
             import json
             return json.dumps({
                 "setNextWaitUntil": timestamp,
@@ -401,20 +382,20 @@ async def discover_tools_endpoint():
     try:
         # Get tools using dummy values for metadata extraction
         agno_tools = get_tools(campaign_id="discovery", tool_cache={})
-
+        
         tools_list = []
         for t in agno_tools:
             params = []
             # DEBUG: Print tool attributes to find the original function
             print(f"DEBUG: Tool {t.name} type: {type(t)}")
             print(f"DEBUG: Tool {t.name} dir: {dir(t)}")
-
+            
             # Inspect parameters if available
             import inspect
             # Try various attributes Agno might use to store the original function
             # entrypoint is common in newer Agno versions
             func = getattr(t, "entrypoint", None) or getattr(t, "entry", None) or getattr(t, "function", None)
-
+            
             if not func and callable(t):
                 func = t
 
@@ -427,7 +408,7 @@ async def discover_tools_endpoint():
                     # Skip injected Agno params
                     if name in ("agent", "run_context", "team"):
                         continue
-
+                        
                     params.append(ToolParameter(
                         name=name,
                         type=str(param.annotation.__name__) if hasattr(param.annotation, "__name__") else str(param.annotation)
@@ -440,13 +421,13 @@ async def discover_tools_endpoint():
                         name=name,
                         type=details.get("type", "any")
                     ))
-
+            
             tools_list.append(ToolInfo(
                 tool_name=t.name,
                 description=t.description,
                 params=params
             ))
-
+        
         return tools_list
 
     except Exception as e:
@@ -470,16 +451,16 @@ async def run_agent_endpoint(request: AgentRequest):
         # Extract settings
         ts = request.templateSettings
         campaign_settings = ts.get("campaign_settings", {})
-
+        
         # Use LLM model from campaign settings if present, else fallback to global DEFAULT_MODEL
         default_model = ts.get("model") or campaign_settings.get("use_llm_model") or DEFAULT_MODEL
         print(f"DEBUG: Using model: {default_model}")
-
+        
         temperature = ts.get("temperature", 0)
-
+        
         # Check if the model is GPT-5 (prefixed with gpt-5)
         is_gpt_5 = default_model.lower().startswith("gpt-5")
-
+        
         base_prompt = ts.get("callprompt", "You are a helpful assistant.")
 
         enable_tools = campaign_settings.get(
@@ -547,8 +528,7 @@ async def run_agent_endpoint(request: AgentRequest):
             role = msg.get("role", "user").title()
             chat_history_text += f"{role}: {msg.get('content')}\n"
 
-        last_msg_content = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
-        last_msg_role = request.chatHistory[-1].get("role", "user").title() if request.chatHistory else "User"
+        last_msg = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
 
         # Dynamic context moved here to improve prompt caching of the system instructions
         dynamic_context = (
@@ -556,44 +536,101 @@ async def run_agent_endpoint(request: AgentRequest):
             f"\n\nAdditional Context:\n"
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
-            f"- The campaign_id for this call is {camp_id}.\n"
+            f"- The campaign_id for this call is {camp_id}.\n"            
             f"- The current date and time is {datetime.now()}.\n"
             f"- CURRENT NODE: {current_node}.\n"
         )
 
-        full_prompt = chat_history_text  + f"{last_msg_role}: {last_msg_content}" + dynamic_context
+        full_prompt = chat_history_text  + f"User: {last_msg}" + dynamic_context
 
         print("\n--- FINAL PROMPT ---\n")
         print(full_prompt)
         print("\n--------------------\n")
 
         # -------------------------------------------------------
-        # 8. Run Agent with Deterministic Validation Loop
+        # 8. Run Agent with Critique Loop
         # -------------------------------------------------------
 
         response = await agent.arun(full_prompt)
-
+        
         # Max retries for self-correction
         max_retries = 2
         current_attempt = 0
-
-        final_validated_output = response.content
+        
+        final_validated_output = None
 
         while current_attempt < max_retries:
-            logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
+            logger.info(f"Running Validator Agent (Attempt {current_attempt + 1})...")
+            
+            # Prepare validator model parameters
+            val_model_params = {
+                "id": default_model,
+                "api_key": OPENAI_API_KEY,
+            }
+            if not is_gpt_5:
+                val_model_params["temperature"] = 0
 
-            # Use Python-based validation and auto-fixing
-            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node)
+            validator_agent = Agent(
+                model=OpenAIChat(**val_model_params),
+                debug_mode=True,
+                instructions=[
+                    "You are a strict output validator.",
+                    "Your job is to check the Main Agent's output against the JSON CONSTRAINTS and logical rules.",
+                    "1) If there are simple fixes (e.g., converting '' to null, setting arrays to []), fix them directly in `fixed_response` and set `is_valid` to true.",
+                    "2) Set `is_valid` to true only if the output is correct or can be easily fixed.",
+                    "3) If there are major logical errors, set `is_valid` to false and provide a detailed `critique`.",
+                    "4) ALWAYS provide the best possible `fixed_response` based on the Main Agent's intent.",
+                    VALIDATOR_INSTRUCTIONS
+                ],
+                output_schema=ValidationResult,
+            )
 
-            if is_valid:
-                final_validated_output = fixed_response
-                logger.info("Validation successful (deterministic).")
-                print(f"DEBUG: Final Validated Output: {final_validated_output.model_dump_json(indent=2)}")
-                break
+            main_output_str = ""
+            if isinstance(response.content, WhatsAppResponse):
+                main_output_str = response.content.model_dump_json()
             else:
+                main_output_str = str(response.content)
+
+            # Capture tool results from the agent's run
+            tool_results_str = ""
+            if hasattr(response, "messages"):
+                for m in response.messages:
+                    if hasattr(m, "role") and m.role == "tool":
+                        tool_results_str += f"Tool Result: {m.content}\n"
+
+            # Pass history, tool results, and the output to the validator
+            validation_payload = [
+                f"CONVERSATION HISTORY:\n{full_prompt}",
+                f"TOOL RESULTS:\n{tool_results_str if tool_results_str else 'No tools were called.'}",
+                f"MAIN AGENT OUTPUT TO VALIDATE:\n{main_output_str}"
+            ]
+            validation_payload = "\n\n".join([v for v in validation_payload if v])
+
+            print("\n--- VALIDATION PAYLOAD ---\n")
+            print(validation_payload)
+            print("\n--------------------------\n")
+            
+            val_response = await validator_agent.arun(validation_payload)
+            val_result: ValidationResult = val_response.content
+            final_validated_output = response.content
+
+            if isinstance(val_result, ValidationResult):
+                if val_result.is_valid and val_result.fixed_response:
+                    final_validated_output = val_result.fixed_response
+                    logger.info("Validation successful (or auto-fixed).")
+                    print(f"DEBUG: Final Validated Output: {final_validated_output.model_dump_json(indent=2)}")
+                    break
+                else:
+                    current_attempt += 1
+                    error_msg = val_result.critique if val_result.critique else "Output failed Pydantic validation or logic constraints."
+                    logger.warning(f"Validation failed: {error_msg}. Retrying main agent...")
+                    retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid.\n{error_msg}\n\nPlease correct your output."
+                    response = await agent.arun(retry_prompt)
+            else:
+                # Fallback if validator failed to follow schema
                 current_attempt += 1
-                logger.warning(f"Validation failed: {critique}. Retrying main agent...")
-                retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid.\n{critique}\n\nPlease correct your output strictly according to the rules."
+                logger.error("Validator failed to return ValidationResult schema.")
+                retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid. Please ensure you follow the JSON constraints strictly."
                 response = await agent.arun(retry_prompt)
 
         # -------------------------------------------------------

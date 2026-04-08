@@ -42,7 +42,7 @@ class WhatsAppResponse(BaseModel):
     quickReplyOptions: List[str] = Field(default_factory=list, description="An array of strings representing quick reply buttons for the user, if applicable")
     isYesOrNoQuestion: bool = Field(False, description="Set to true if the responseText is a question that expects a yes or no answer.")
     isEndOfConversation: bool = Field(
-        False,
+        False, 
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
 
@@ -81,11 +81,11 @@ def validate_and_fix_response(response_content: Any, current_node: str = "") -> 
             return None, False, f"Failed to parse response into WhatsAppResponse schema: {str(e)}"
 
     # --- 1. Auto-Fixes & Normalization ---
-
+    
     # Normalize empty strings to None for specific fields
     string_fields = [
-        "responseText", "responseWATemplate", "saveDataVariable",
-        "saveDataValue", "waTemplateContent", "fileAssetId",
+        "responseText", "responseWATemplate", "saveDataVariable", 
+        "saveDataValue", "waTemplateContent", "fileAssetId", 
         "setNextWaitUntil", "nextNode"
     ]
     for field in string_fields:
@@ -100,21 +100,21 @@ def validate_and_fix_response(response_content: Any, current_node: str = "") -> 
         response_content.quickReplyOptions = []
 
     # --- 2. Logical Validation ---
-
+    
     critical_errors = []
 
     # A. Mutual Exclusivity: responseText vs responseWATemplate
     has_text = bool(response_content.responseText)
     has_template = bool(response_content.responseWATemplate)
-
+    
     # if has_text and has_template:
     #     critical_errors.append("Both 'responseText' and 'responseWATemplate' are set. They are mutually exclusive. Use only one.")
 
     # B. Minimum Response Requirement
     has_file = bool(response_content.fileAssetId)
     has_save = bool(response_content.saveDataVariable)
-
-    if (not (has_text or has_template)) and not (has_save):
+    
+    if not (has_text or has_template):
         critical_errors.append("You must provide a value for 'responseText', 'responseWATemplate'. Both the params cannot be NULL or empty string at the same time. ")
         # D. Decision Node Rules
         if "Decision" in current_node:
@@ -127,8 +127,8 @@ def validate_and_fix_response(response_content: Any, current_node: str = "") -> 
                 "- If input is unclear, use fallback path and execute fallback node immediately."
             )
 
-    #if has_save:
-    #    critical_errors.append("Data is saved. Immediately proceed to next node as per conversation flow.")
+    if has_save and not (has_text or has_template):
+        critical_errors.append("You have provided 'saveDataVariable' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' to communicate with the user while saving data.")
 
     if has_file and not (has_text or has_template):
         critical_errors.append("You have provided 'fileAssetId' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' with appropriate message to communicate with the user while sending file.")
@@ -141,11 +141,11 @@ def validate_and_fix_response(response_content: Any, current_node: str = "") -> 
 
 
     # --- 3. Final Result ---
-
+    
     if critical_errors:
         critique = "The output is invalid due to the following reasons: \n- " + "\n- ".join(critical_errors)
         return response_content, False, critique
-
+    
     return response_content, True, None
 
 # -------------------------------------------------------
@@ -213,7 +213,7 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     # Create a unique cache key based on tool name and arguments
     import json
     cache_key = f"{name}:{json.dumps(arguments, sort_keys=True)}"
-
+    
     if cache_key in cache:
         logger.info(f"Cache HIT for tool: {name}")
         return cache[cache_key]
@@ -239,10 +239,10 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     if isinstance(mcp_result, dict):
         # Check for 'content' (standard MCP), then 'id', 'output', 'result', etc.
         result_data = (
-            mcp_result.get("content") or
-            mcp_result.get("id") or
-            mcp_result.get("output") or
-            mcp_result.get("result") or
+            mcp_result.get("content") or 
+            mcp_result.get("id") or 
+            mcp_result.get("output") or 
+            mcp_result.get("result") or 
             mcp_result
         )
     else:
@@ -250,7 +250,7 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
 
     # 3. Convert to a clean string for the LLM
     final_result = str(result_data)
-
+    
     # Store in cache and return
     cache[cache_key] = final_result
     return final_result
@@ -288,7 +288,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
     async def textgen_trigger_node_wait(merakle_call_id: str, query: str) -> str:
         """Returns a future timestamp based on the user's specified wait criteria. This tool should only be called when explicitly instructed by a Step in the workflow."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
-
+        
         ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         today_date = ist_now.strftime("%Y-%m-%d")
         tomorrow_date = (ist_now + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -300,7 +300,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             start_index = 0
             if chat_history[0].get("role") == "system":
                 start_index = 1
-
+            
             history_str += "\n\nConversation History:\n"
             for msg in chat_history[start_index:-1]:
                 role = msg.get("role", "user").title()
@@ -311,14 +311,14 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             history_str += f"{last_msg_role}: {last_msg_content}"
 
         prompt = f"""
-
+                
         Current Date and Time : {current_date_time}
         Today's Date : {today_date}
         Tomorrow's Date : {tomorrow_date}
 
         {history_str}
 
-        User Query: Timestamp in final output should be equal to {query}.
+        User Query: Timestamp in final output should be equal to {query}. 
 
         Instructions:
         - Resolve all relative time expressions (e.g., today, tomorrow).
@@ -335,12 +335,12 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "gpt-4.1-mini",
+            "model": default_model,
             "messages": [
                 {
                     "role": "system",
                     "content": """You are a strict timestamp extraction and calculation assistant.
-        Understand the user's query and use the conversation history and information regarding current date, time and tomorrow's date to come up with the requrired output as
+        Understand the user's query and use the conversation history and information regarding current date, time and tomorrow's date to come up with the requrired output as 
         per instructions provided.
         Follow instructions EXACTLY. Do not skip steps. Do not infer missing data."""
                 },
@@ -349,20 +349,20 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             "temperature": 0
         }
 
-
+        
         try:
             resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
             resp.raise_for_status()
-
+            
             raw_content = resp.json()["choices"][0]["message"]["content"]
             print(f"\n--- OPENAI RAW RESPONSE (textgen_trigger_node_wait) ---\n{raw_content}\n------------------------------------------------------\n")
-
+            
             timestamp = raw_content.strip()
-
+            
             # Clean up the response
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
             print(f"DEBUG: Extracted Timestamp: {timestamp}")
-
+            
             import json
             return json.dumps({
                 "setNextWaitUntil": timestamp,
@@ -401,20 +401,20 @@ async def discover_tools_endpoint():
     try:
         # Get tools using dummy values for metadata extraction
         agno_tools = get_tools(campaign_id="discovery", tool_cache={})
-
+        
         tools_list = []
         for t in agno_tools:
             params = []
             # DEBUG: Print tool attributes to find the original function
             print(f"DEBUG: Tool {t.name} type: {type(t)}")
             print(f"DEBUG: Tool {t.name} dir: {dir(t)}")
-
+            
             # Inspect parameters if available
             import inspect
             # Try various attributes Agno might use to store the original function
             # entrypoint is common in newer Agno versions
             func = getattr(t, "entrypoint", None) or getattr(t, "entry", None) or getattr(t, "function", None)
-
+            
             if not func and callable(t):
                 func = t
 
@@ -427,7 +427,7 @@ async def discover_tools_endpoint():
                     # Skip injected Agno params
                     if name in ("agent", "run_context", "team"):
                         continue
-
+                        
                     params.append(ToolParameter(
                         name=name,
                         type=str(param.annotation.__name__) if hasattr(param.annotation, "__name__") else str(param.annotation)
@@ -440,13 +440,13 @@ async def discover_tools_endpoint():
                         name=name,
                         type=details.get("type", "any")
                     ))
-
+            
             tools_list.append(ToolInfo(
                 tool_name=t.name,
                 description=t.description,
                 params=params
             ))
-
+        
         return tools_list
 
     except Exception as e:
@@ -470,16 +470,16 @@ async def run_agent_endpoint(request: AgentRequest):
         # Extract settings
         ts = request.templateSettings
         campaign_settings = ts.get("campaign_settings", {})
-
+        
         # Use LLM model from campaign settings if present, else fallback to global DEFAULT_MODEL
         default_model = ts.get("model") or campaign_settings.get("use_llm_model") or DEFAULT_MODEL
         print(f"DEBUG: Using model: {default_model}")
-
+        
         temperature = ts.get("temperature", 0)
-
+        
         # Check if the model is GPT-5 (prefixed with gpt-5)
         is_gpt_5 = default_model.lower().startswith("gpt-5")
-
+        
         base_prompt = ts.get("callprompt", "You are a helpful assistant.")
 
         enable_tools = campaign_settings.get(
@@ -556,7 +556,7 @@ async def run_agent_endpoint(request: AgentRequest):
             f"\n\nAdditional Context:\n"
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
-            f"- The campaign_id for this call is {camp_id}.\n"
+            f"- The campaign_id for this call is {camp_id}.\n"            
             f"- The current date and time is {datetime.now()}.\n"
             f"- CURRENT NODE: {current_node}.\n"
         )
@@ -572,19 +572,19 @@ async def run_agent_endpoint(request: AgentRequest):
         # -------------------------------------------------------
 
         response = await agent.arun(full_prompt)
-
+        
         # Max retries for self-correction
         max_retries = 2
         current_attempt = 0
-
+        
         final_validated_output = response.content
 
         while current_attempt < max_retries:
             logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
-
+            
             # Use Python-based validation and auto-fixing
             fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node)
-
+            
             if is_valid:
                 final_validated_output = fixed_response
                 logger.info("Validation successful (deterministic).")
