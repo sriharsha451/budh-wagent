@@ -523,7 +523,9 @@ async def run_agent_endpoint(request: AgentRequest):
             "id": default_model,
             "api_key": OPENAI_API_KEY,
         }
-        if not is_gpt_5:
+        if is_gpt_5:
+            main_model_params["reasoning"] = {"effort": "none"}
+        else:
             main_model_params["temperature"] = temperature
 
         agent = Agent(
