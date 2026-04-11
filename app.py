@@ -1,6 +1,7 @@
 import os
 import httpx
 import uuid
+import json
 from typing import List, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
@@ -62,7 +63,7 @@ class ToolInfo(BaseModel):
 # 1.1. Deterministic Validation Logic
 # -------------------------------------------------------
 
-def validate_and_fix_response(response_content: Any, current_node: str = "") -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
+def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
     """
     Validates the WhatsAppResponse object, applies auto-fixes for common issues,
     and returns a critique if critical constraints are violated.
@@ -71,7 +72,6 @@ def validate_and_fix_response(response_content: Any, current_node: str = "") -> 
         try:
             # Try to parse if it's a dict or string
             if isinstance(response_content, str):
-                import json
                 response_content = WhatsAppResponse.model_validate_json(response_content)
             elif isinstance(response_content, dict):
                 response_content = WhatsAppResponse.model_validate(response_content)
@@ -114,7 +114,15 @@ def validate_and_fix_response(response_content: Any, current_node: str = "") -> 
     has_file = bool(response_content.fileAssetId)
     has_save = bool(response_content.saveDataVariable)
 
-    if (not (has_text or has_template)) and not (has_save):
+    # Check for "merakle-signal-nudge-notification" in chat_history
+    is_nudge = False
+    if chat_history and len(chat_history) > 0:
+        last_msg = chat_history[-1]
+        print(f"DEBUG: last_msg: {last_msg}")
+        if last_msg.get("content") == "merakle-signal-nudge-notification":
+            is_nudge = True
+
+    if (not (has_text or has_template)) and not (has_save) and not is_nudge:
         critical_errors.append("You must provide a value for 'responseText', 'responseWATemplate'. Both the params cannot be NULL or empty string at the same time. ")
         # D. Decision Node Rules
         if "Decision" in current_node:
@@ -211,7 +219,6 @@ async def execute_mcp_tool(name: str, arguments: dict, cache: dict) -> str:
     Standardizes response handling to be generic across different tools.
     """
     # Create a unique cache key based on tool name and arguments
-    import json
     cache_key = f"{name}:{json.dumps(arguments, sort_keys=True)}"
 
     if cache_key in cache:
@@ -278,7 +285,6 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
     async def search_knowledge(query: str) -> str:
         """Searches the knowledgebase for answers to the user's query. This tool should be invoked only when the user asks for information that requires searching the knowledgebase."""
         json_res = await search_knowledge_base(campaign_id, query)
-        import json
         return json.dumps(json_res, indent=2)
 
     @tool(
@@ -363,11 +369,8 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
             print(f"DEBUG: Extracted Timestamp: {timestamp}")
 
-            import json
-            return json.dumps({
-                "setNextWaitUntil": timestamp,
-                "instruction": f"Set setNextWaitUntil to {timestamp}"
-            })
+            return timestamp
+
         except Exception as e:
             logger.exception(f"Error in textgen_trigger_node_wait: {e}")
             return f"Error updating wait time: {str(e)}"
@@ -524,7 +527,7 @@ async def run_agent_endpoint(request: AgentRequest):
             "api_key": OPENAI_API_KEY,
         }
         if is_gpt_5:
-            main_model_params["reasoning"] = {"effort": "none"}
+            main_model_params["reasoning_effort"] = "low"
         else:
             main_model_params["temperature"] = temperature
 
@@ -560,7 +563,7 @@ async def run_agent_endpoint(request: AgentRequest):
             f"- The merakle_account_id for this call is {account_id}.\n"
             f"- The campaign_id for this call is {camp_id}.\n"
             f"- The current date and time is {datetime.now()}.\n"
-            f"- CURRENT NODE: {current_node}.\n"
+            #f"- CURRENT NODE: {current_node}.\n"
         )
 
         full_prompt = chat_history_text  + f"{last_msg_role}: {last_msg_content}" + dynamic_context
@@ -585,7 +588,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
 
             # Use Python-based validation and auto-fixing
-            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node)
+            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.chatHistory)
 
             if is_valid:
                 final_validated_output = fixed_response
