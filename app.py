@@ -396,6 +396,42 @@ class AgentRequest(BaseModel):
     currentNode: Any
     chatHistory: List[Dict[str, Any]]
     templateSettings: Dict[str, Any]
+    callWorkflow: Optional[Dict[str, Any]] = None
+
+
+# -------------------------------------------------------
+# 1.2. Static Response Generator
+# -------------------------------------------------------
+
+def generate_static_response(node_data: dict, nodes: list) -> WhatsAppResponse:
+    """
+    Generates a WhatsAppResponse directly from node data without LLM intervention.
+    """
+    placeholders = node_data.get("whatsappTemplatePlaceholders", [])
+    params = []
+    if isinstance(placeholders, list):
+        # Extract the 'value' from each placeholder object
+        params = [str(p.get("value", "")) for p in placeholders]
+
+    next_node_id = node_data.get("nextNode")
+    target_label = None
+    if next_node_id:
+        target_node = next((n for n in nodes if str(n.get("id")) == str(next_node_id)), None)
+        if target_node:
+            target_label = target_node.get("data", {}).get("label")
+
+    is_end = next_node_id == "end-call" or target_label == "End Call"
+
+    return WhatsAppResponse(
+        responseText=node_data.get("messageContent") or node_data.get("whatsappTemplateContent"),
+        responseWATemplate=node_data.get("whatsappTemplateId"),
+        saveDataVariable=node_data.get("saveToVariable"),
+        waTemplateParams=params,
+        waTemplateContent=node_data.get("whatsappTemplateContent"),
+        fileAssetId=node_data.get("sendFileToUserAssetId"),
+        nextNode=None if is_end else target_label,
+        isEndOfConversation=is_end
+    )
 
 
 @app.get("/discovery/tools", response_model=List[ToolInfo])
@@ -466,6 +502,44 @@ async def run_agent_endpoint(request: AgentRequest):
         current_node = str(request.currentNode)
         camp_id = str(request.campaignId)
         logger.info(f"--- New Request: Task {task_id} and campaign id {camp_id}---")
+
+        last_msg_content = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
+
+        if last_msg_content == "merakle-signal-start-conversation-message":
+            logger.info("Start conversation signal detected. Using static response generator for 'Start Call' node.")
+            workflow = request.callWorkflow or {}
+            nodes = workflow.get("nodes", [])
+            node = next((n for n in nodes if str(n.get("data", {}).get("label")) == "Start Call"), None)
+            if node:
+                return generate_static_response(node.get("data", {}), nodes)
+
+        # -------------------------------------------------------
+        # 4.1 Handle Workflow Node Routing
+        # -------------------------------------------------------
+        # if request.callWorkflow and not str(last_msg_content).lower().startswith("merakle-"):
+        #     workflow = request.callWorkflow
+        #     nodes = workflow.get("nodes", [])
+        #     current_node_id = str(request.currentNode)
+        #     node = next((n for n in nodes if str(n.get("data", {}).get("label")) == current_node_id), None)
+
+        #     if node:
+        #         node_type = node.get("type")
+        #         node_data = node.get("data", {})
+        #         message_type = node_data.get("messageType")
+
+        #         # If current_node is type "decision", run the main agent (LLM)
+        #         # If current_node is type "standard", check messageType
+        #         if node_type == "decision":
+        #             logger.info(f"Node {current_node_id} is a decision node. Proceeding to LLM.")
+        #         elif node_type == "standard":
+        #             if message_type == "prompt":
+        #                 logger.info(f"Node {current_node_id} is a standard prompt node. Proceeding to LLM.")
+        #             else:
+        #                 logger.info(f"Node {current_node_id} is a standard non-prompt node. Generating static response.")
+        #                 return generate_static_response(node_data, nodes)
+        #         else:
+        #             logger.info(f"Node {current_node_id} has type '{node_type}'. Generating static response.")
+        #             return generate_static_response(node_data, nodes)
 
         # Request-scoped tool cache
         tool_cache = {}
