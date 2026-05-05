@@ -423,11 +423,11 @@ def generate_static_response(node_data: dict, nodes: list) -> WhatsAppResponse:
     is_end = next_node_id == "end-call" or target_label == "End Call"
 
     return WhatsAppResponse(
-        responseText=node_data.get("messageContent") or node_data.get("whatsappTemplateContent"),
-        responseWATemplate=node_data.get("whatsappTemplateId"),
+        responseText=node_data.get("messageContent") or node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"),
+        responseWATemplate=node_data.get("whatsappTemplateId") or node_data.get("emailTemplateId"),
         saveDataVariable=node_data.get("saveToVariable"),
         waTemplateParams=params,
-        waTemplateContent=node_data.get("whatsappTemplateContent"),
+        waTemplateContent=node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"),
         fileAssetId=node_data.get("sendFileToUserAssetId"),
         nextNode=None if is_end else target_label,
         isEndOfConversation=is_end
