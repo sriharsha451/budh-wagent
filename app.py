@@ -407,7 +407,11 @@ def generate_static_response(node_data: dict, nodes: list) -> WhatsAppResponse:
     """
     Generates a WhatsAppResponse directly from node data without LLM intervention.
     """
-    placeholders = node_data.get("whatsappTemplatePlaceholders", [])
+    placeholders = (
+        node_data.get("whatsappTemplatePlaceholders")
+        or node_data.get("emailTemplatePlaceholders")
+        or []
+    )
     params = []
     if isinstance(placeholders, list):
         # Extract the 'value' from each placeholder object
