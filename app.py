@@ -46,6 +46,7 @@ class WhatsAppResponse(BaseModel):
         False,
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
+    emailSubject: Optional[str] = Field(None, description="Subject line for email responses, if applicable")
 
 
 class ToolParameter(BaseModel):
@@ -86,7 +87,7 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
     string_fields = [
         "responseText", "responseWATemplate", "saveDataVariable",
         "saveDataValue", "waTemplateContent", "fileAssetId",
-        "setNextWaitUntil", "nextNode"
+        "setNextWaitUntil", "nextNode", "emailSubject"
     ]
     for field in string_fields:
         val = getattr(response_content, field)
@@ -434,7 +435,8 @@ def generate_static_response(node_data: dict, nodes: list) -> WhatsAppResponse:
         waTemplateContent=node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"),
         fileAssetId=node_data.get("sendFileToUserAssetId"),
         nextNode=None if is_end else target_label,
-        isEndOfConversation=is_end
+        isEndOfConversation=is_end,
+        emailSubject=node_data.get("emailTemplateSubject")
     )
 
 
