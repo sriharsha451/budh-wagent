@@ -64,7 +64,7 @@ class ToolInfo(BaseModel):
 # 1.1. Deterministic Validation Logic
 # -------------------------------------------------------
 
-def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
+def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None, protocol: str = "whatsapp") -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
     """
     Validates the WhatsAppResponse object, applies auto-fixes for common issues,
     and returns a critique if critical constraints are violated.
@@ -139,8 +139,12 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
     #if has_save:
     #    critical_errors.append("Data is saved. Immediately proceed to next node as per conversation flow.")
 
-    if has_file and not (has_text or has_template):
-        critical_errors.append("You have provided 'fileAssetId' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' with appropriate message to communicate with the user while sending file.")
+    if protocol.upper() == "EMAIL":
+        if has_file and not has_text:
+            critical_errors.append("You have provided 'fileAssetId' but missing 'responseText'. You must provide 'responseText' with appropriate message to communicate with the user while sending file.")
+    else:
+        if has_file and not (has_text or has_template):
+            critical_errors.append("You have provided 'fileAssetId' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' with appropriate message to communicate with the user while sending file.")
 
     # C. Template Integrity
     if has_template and not response_content.waTemplateContent:
@@ -398,6 +402,7 @@ class AgentRequest(BaseModel):
     chatHistory: List[Dict[str, Any]]
     templateSettings: Dict[str, Any]
     callWorkflow: Optional[Dict[str, Any]] = None
+    protocol: Any
 
 
 # -------------------------------------------------------
@@ -554,6 +559,8 @@ async def run_agent_endpoint(request: AgentRequest):
         ts = request.templateSettings
         campaign_settings = ts.get("campaign_settings", {})
 
+        protocol = str(request.protocol or ts.get("protocol") or campaign_settings.get("protocol") or "WHATSAPP")
+
         # Use LLM model from campaign settings if present, else fallback to global DEFAULT_MODEL
         default_model = ts.get("model") or campaign_settings.get("use_llm_model") or DEFAULT_MODEL
         print(f"DEBUG: Using model: {default_model}")
@@ -668,7 +675,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
 
             # Use Python-based validation and auto-fixing
-            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.chatHistory)
+            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.chatHistory, protocol)
 
             if is_valid:
                 final_validated_output = fixed_response
