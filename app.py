@@ -38,6 +38,7 @@ class AppointmentParams(BaseModel):
     time: Optional[str] = Field(None, description="Time of the appointment")
     person: Optional[str] = Field(None, description="Person involved in the appointment")
     notes: Optional[str] = Field(None, description="Additional notes or description")
+    emailBody: Optional[str] = Field(None, description="Body content for email notifications related to the appointment")
 
 
 class AppointmentModel(BaseModel):
