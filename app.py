@@ -30,6 +30,11 @@ http_client = httpx.AsyncClient(timeout=30)
 # 1. Structured Output Schema
 # -------------------------------------------------------
 
+class ActionModel(BaseModel):
+    action_name: str = Field(..., description="Name of the action to execute")
+    action_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters specific to the action")
+
+
 class WhatsAppResponse(BaseModel):
     responseText: Optional[str] = Field(None, description="AI's message/response to the user if applicable")
     responseWATemplate: Optional[str] = Field(None, description="WhatsApp template ID to respond with, if applicable")
@@ -47,6 +52,7 @@ class WhatsAppResponse(BaseModel):
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
     emailSubject: Optional[str] = Field(None, description="Subject line for email responses, if applicable")
+    actions: List[ActionModel] = Field(default_factory=list, description="A list of structured actions to be executed.")
 
 
 class ToolParameter(BaseModel):
@@ -99,6 +105,8 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
         response_content.waTemplateParams = []
     if response_content.quickReplyOptions is None:
         response_content.quickReplyOptions = []
+    if response_content.actions is None:
+        response_content.actions = []
 
     # --- 2. Logical Validation ---
 
