@@ -32,7 +32,7 @@ http_client = httpx.AsyncClient(timeout=30)
 
 class ActionModel(BaseModel):
     action_name: str = Field(..., description="Name of the action to execute")
-    action_params: Dict[str, Any] = Field(default_factory=dict, description="Parameters specific to the action")
+    action_params: str = Field("{}", description="JSON string of parameters specific to the action")
 
 
 class WhatsAppResponse(BaseModel):
