@@ -30,9 +30,19 @@ http_client = httpx.AsyncClient(timeout=30)
 # 1. Structured Output Schema
 # -------------------------------------------------------
 
-class ActionModel(BaseModel):
-    action_name: str = Field(..., description="Name of the action to execute")
-    action_params: str = Field("{}", description="JSON string of parameters specific to the action")
+class AppointmentParams(BaseModel):
+    subject: Optional[str] = Field(None, description="Subject of the appointment")
+    appointment_id: Optional[str] = Field(None, description="Unique ID of the appointment, if updating/deleting")
+    title: Optional[str] = Field(None, description="Title of the appointment")
+    date: Optional[str] = Field(None, description="Date of the appointment (e.g. YYYY-MM-DD)")
+    time: Optional[str] = Field(None, description="Time of the appointment")
+    person: Optional[str] = Field(None, description="Person involved in the appointment")
+    notes: Optional[str] = Field(None, description="Additional notes or description")
+
+
+class AppointmentModel(BaseModel):
+    action_name: str = Field(..., description="Action to perform: create, update, or delete")
+    params: AppointmentParams = Field(default_factory=AppointmentParams, description="Parameters for the appointment action")
 
 
 class WhatsAppResponse(BaseModel):
@@ -52,7 +62,7 @@ class WhatsAppResponse(BaseModel):
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
     emailSubject: Optional[str] = Field(None, description="Subject line for email responses, if applicable")
-    actions: List[ActionModel] = Field(default_factory=list, description="A list of structured actions to be executed.")
+    appointment: Optional[AppointmentModel] = Field(None, description="Set if an appointment/meeting needs to be created/updated/deleted")
 
 
 class ToolParameter(BaseModel):
@@ -105,8 +115,6 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
         response_content.waTemplateParams = []
     if response_content.quickReplyOptions is None:
         response_content.quickReplyOptions = []
-    if response_content.actions is None:
-        response_content.actions = []
 
     # --- 2. Logical Validation ---
 
