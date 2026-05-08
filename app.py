@@ -39,6 +39,7 @@ class AppointmentParams(BaseModel):
     person: Optional[str] = Field(None, description="Person involved in the appointment")
     notes: Optional[str] = Field(None, description="Additional notes or description")
     emailBody: Optional[str] = Field(None, description="Body content for email notifications related to the appointment")
+    timezone: Optional[str] = Field(None, description="Timezone for the appointment (e.g. UTC, IST, America/New_York)")
 
 
 class AppointmentModel(BaseModel):
