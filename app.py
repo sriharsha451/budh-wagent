@@ -42,7 +42,7 @@ class AppointmentParams(BaseModel):
 
 class AppointmentModel(BaseModel):
     action_name: str = Field(..., description="Action to perform: create, update, or delete")
-    params: AppointmentParams = Field(default_factory=AppointmentParams, description="Parameters for the appointment action")
+    params: AppointmentParams = Field(default_factory=AppointmentParams)
 
 
 class WhatsAppResponse(BaseModel):
@@ -62,7 +62,7 @@ class WhatsAppResponse(BaseModel):
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
     emailSubject: Optional[str] = Field(None, description="Subject line for email responses, if applicable")
-    appointment: Optional[AppointmentModel] = Field(None, description="Set if an appointment/meeting needs to be created/updated/deleted")
+    appointment: Optional[AppointmentModel] = Field(None)
 
 
 class ToolParameter(BaseModel):
