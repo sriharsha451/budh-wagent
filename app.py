@@ -10,6 +10,17 @@ from agno.tools import tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from datetime import datetime, timezone, timedelta
+import re
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    # Fallback for Python versions < 3.9
+    try:
+        from pytz import timezone as PyTZZoneInfo
+        def ZoneInfo(tz): return PyTZZoneInfo(tz)
+    except ImportError:
+        ZoneInfo = None
+
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -78,11 +89,145 @@ class ToolInfo(BaseModel):
     params: List[ToolParameter]
 
 
+class AvailabilityModel(BaseModel):
+    summaryUtc: Optional[Any] = Field(None, description="Summary of availability in UTC")
+    activeHoursUtc: Optional[Any] = Field(None, description="Active hours in UTC")
+    timezone: Optional[str] = Field(None, description="User's local IANA timezone")
+
+
 # -------------------------------------------------------
 # 1.1. Deterministic Validation Logic
 # -------------------------------------------------------
 
-def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None, protocol: str = "whatsapp") -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
+def load_tz_mapping():
+    """
+    Loads timezone mapping from timezones.json.
+    Maps abbr, value, and text to the first IANA key in the 'utc' list.
+    """
+    mapping = {}
+    try:
+        with open("timezones.json", "r", encoding="utf-8") as f:
+            tz_data = json.load(f)
+            for entry in tz_data:
+                iana_keys = entry.get("utc", [])
+                if not iana_keys:
+                    continue
+                
+                primary_iana = iana_keys[0]
+                
+                # Map abbreviation
+                abbr = entry.get("abbr")
+                if abbr:
+                    mapping[abbr.upper()] = primary_iana
+                
+                # Map value
+                val = entry.get("value")
+                if val:
+                    mapping[val.upper()] = primary_iana
+                
+                # Map text (description)
+                text = entry.get("text")
+                if text:
+                    mapping[text.upper()] = primary_iana
+                    
+    except Exception as e:
+        logger.error(f"Failed to load timezones.json: {e}")
+    
+    # Ensure common ones are present as fallback/override
+    overrides = {
+        "IST": "Asia/Kolkata",
+        "PST": "America/Los_Angeles",
+        "PDT": "America/Los_Angeles",
+        "EST": "America/New_York",
+        "EDT": "America/New_York",
+        "CST": "America/Chicago",
+        "CDT": "America/Chicago",
+        "MST": "America/Denver",
+        "MDT": "America/Denver",
+    }
+    mapping.update(overrides)
+    return mapping
+
+# Global TZ mapping
+TZ_MAPPING = load_tz_mapping()
+
+
+def is_appointment_available(appointment: AppointmentModel, availability: Optional[AvailabilityModel]) -> tuple[bool, str]:
+    """
+    Checks if the requested appointment time is within the provided availability slots.
+    """
+    if not availability or not availability.summaryUtc:
+        return True, ""  # No availability info provided, skip check
+
+    params = appointment.params
+    if not params.date or not params.time:
+        return True, ""  # Missing date/time, can't check
+
+    # Try to get timezone
+    tz_str = params.timezone or "UTC"
+    
+    # Map common abbreviations/names to IANA keys
+    iana_tz = TZ_MAPPING.get(tz_str.upper(), tz_str)
+    
+    if ZoneInfo is None:
+        logger.warning("Timezone validation skipped: neither 'zoneinfo' nor 'pytz' is available.")
+        return True, ""
+
+    try:
+        # Normalize time format if needed (e.g. 3 PM -> 15:00)
+        time_str = params.time
+        if "AM" in time_str.upper() or "PM" in time_str.upper():
+            dt_parse = datetime.strptime(time_str, "%I:%M %p")
+            time_str = dt_parse.strftime("%H:%M")
+        
+        dt_str = f"{params.date} {time_str}"
+        # Parse as naive first, then attach TZ
+        naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+        aware_dt = naive_dt.replace(tzinfo=ZoneInfo(iana_tz))
+        utc_dt = aware_dt.astimezone(timezone.utc)
+    except Exception as e:
+        return False, f"Invalid date/time/timezone format '{tz_str}': {str(e)}. Ensure you use valid IANA timezone names (e.g., 'Asia/Kolkata', 'America/Los_Angeles')."
+
+    # Parse summaryUtc
+    # Expected format: " - 2026-05-11 (UTC ISO Slots): 2026-05-11T03:30:00Z → 2026-05-11T11:30:00Z"
+    slots = []
+    
+    # Handle cases where summaryUtc might be a list or other structure due to Any type
+    summary_text = ""
+    if isinstance(availability.summaryUtc, str):
+        summary_text = availability.summaryUtc
+    elif isinstance(availability.summaryUtc, list):
+        summary_text = "\n".join([str(item) for item in availability.summaryUtc])
+    elif isinstance(availability.summaryUtc, dict):
+        # Look for common keys if it's a dict
+        summary_text = str(availability.summaryUtc.get("summary") or availability.summaryUtc.get("text") or availability.summaryUtc)
+    else:
+        summary_text = str(availability.summaryUtc) if availability.summaryUtc else ""
+    
+    lines = summary_text.split('\n')
+    for line in lines:
+        # Match ISO timestamps
+        match = re.search(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s*→\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)', line)
+        if match:
+            start_str, end_str = match.groups()
+            # replace Z with +00:00 for fromisoformat compatibility
+            start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+            slots.append((start_dt, end_dt))
+    
+    if not slots:
+        logger.warning("No availability slots could be parsed from summaryUtc.")
+        return True, ""
+        
+    for start_dt, end_dt in slots:
+        # Check if appointment start time is within the slot
+        if start_dt <= utc_dt < end_dt:
+            return True, ""
+            
+    return False, f"The requested time {params.date} at {params.time} ({tz_str}) is outside of the available UTC slots. Please check the 'availability' provided in the request context and suggest a different time to the user."
+
+
+def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None, protocol: str = "whatsapp", availability: Optional[AvailabilityModel] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
     """
     Validates the WhatsAppResponse object, applies auto-fixes for common issues,
     and returns a critique if critical constraints are violated.
@@ -167,6 +312,12 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
     # C. Template Integrity
     if has_template and not response_content.waTemplateContent:
         critical_errors.append("'responseWATemplate' is provided but 'waTemplateContent' is missing. You must provide the rendered content of the template.")
+
+    # D. Appointment Availability Check
+    if response_content.appointment and availability:
+        is_available, error_msg = is_appointment_available(response_content.appointment, availability)
+        if not is_available:
+            critical_errors.append(error_msg)
 
     print(f"DEBUG: Current Node is a Decision Node: {current_node}")
 
@@ -421,6 +572,7 @@ class AgentRequest(BaseModel):
     templateSettings: Dict[str, Any]
     callWorkflow: Optional[Dict[str, Any]] = None
     protocol: Any
+    availability: Optional[AvailabilityModel] = None
 
 
 # -------------------------------------------------------
@@ -661,13 +813,22 @@ async def run_agent_endpoint(request: AgentRequest):
         last_msg_role = request.chatHistory[-1].get("role", "user").title() if request.chatHistory else "User"
 
         # Dynamic context moved here to improve prompt caching of the system instructions
+        now = datetime.now()
+        current_day = now.strftime("%A")
+        
+        # Get availability timezone if provided
+        avail_tz = ""
+        if request.availability and request.availability.timezone:
+            avail_tz = f"- The assistant/system timezone is {request.availability.timezone}.\n"
+            
         dynamic_context = (
             f"\n----------------------------\n"
             f"\n\nAdditional Context:\n"
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
             f"- The campaign_id for this call is {camp_id}.\n"
-            f"- The current date and time is {datetime.now()}.\n"
+            f"- The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')} ({current_day}).\n"
+            f"{avail_tz}"
             #f"- CURRENT NODE: {current_node}.\n"
         )
 
@@ -693,7 +854,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
 
             # Use Python-based validation and auto-fixing
-            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.chatHistory, protocol)
+            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.chatHistory, protocol, request.availability)
 
             if is_valid:
                 final_validated_output = fixed_response
@@ -705,6 +866,7 @@ async def run_agent_endpoint(request: AgentRequest):
                 logger.warning(f"Validation failed: {critique}. Retrying main agent...")
                 retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid.\n{critique}\n\nPlease correct your output strictly according to the rules."
                 response = await agent.arun(retry_prompt)
+                final_validated_output = response.content
 
         # -------------------------------------------------------
         # 9. Return Structured Response
