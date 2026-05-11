@@ -156,11 +156,16 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
     """
     Checks if the requested appointment time is within the provided availability slots.
     """
+    logger.debug(f"is_appointment_available - Appointment: {appointment.model_dump_json() if appointment else 'None'}")
+    logger.debug(f"is_appointment_available - Availability: {availability.model_dump_json() if availability else 'None'}")
+
     if not availability or not availability.summaryUtc:
+        logger.debug("No availability or summaryUtc provided. Skipping check.")
         return True, ""  # No availability info provided, skip check
 
     params = appointment.params
     if not params.date or not params.time:
+        logger.debug(f"Missing date ({params.date}) or time ({params.time}). Skipping check.")
         return True, ""  # Missing date/time, can't check
 
     # Try to get timezone
@@ -168,6 +173,7 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
     
     # Map common abbreviations/names to IANA keys
     iana_tz = TZ_MAPPING.get(tz_str.upper(), tz_str)
+    logger.debug(f"Resolved timezone: {tz_str} -> {iana_tz}")
     
     if ZoneInfo is None:
         logger.warning("Timezone validation skipped: neither 'zoneinfo' nor 'pytz' is available.")
@@ -185,7 +191,9 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
         naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
         aware_dt = naive_dt.replace(tzinfo=ZoneInfo(iana_tz))
         utc_dt = aware_dt.astimezone(timezone.utc)
+        logger.debug(f"Appointment time: {dt_str} ({tz_str}) -> UTC: {utc_dt}")
     except Exception as e:
+        logger.error(f"Timezone resolution error: {e}")
         return False, f"Invalid date/time/timezone format '{tz_str}': {str(e)}. Ensure you use valid IANA timezone names (e.g., 'Asia/Kolkata', 'America/Los_Angeles')."
 
     # Parse summaryUtc
@@ -219,11 +227,14 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
         logger.warning("No availability slots could be parsed from summaryUtc.")
         return True, ""
         
+    logger.debug(f"Checking {utc_dt} against {len(slots)} parsed slots.")
     for start_dt, end_dt in slots:
         # Check if appointment start time is within the slot
         if start_dt <= utc_dt < end_dt:
+            logger.debug(f"Match found in slot: {start_dt} to {end_dt}")
             return True, ""
             
+    logger.debug(f"No match found for {utc_dt} in any slot.")
     return False, f"The requested time {params.date} at {params.time} ({tz_str}) is outside of the available UTC slots. Please check the 'availability' provided in the request context and suggest a different time to the user."
 
 
@@ -692,7 +703,10 @@ async def run_agent_endpoint(request: AgentRequest):
             nodes = workflow.get("nodes", [])
             node = next((n for n in nodes if str(n.get("data", {}).get("label")) == "Start Call"), None)
             if node:
-                return generate_static_response(node.get("data", {}), nodes)
+                node_data = node.get("data", {})
+                # Check if we should use the template as reference (LLM) or as a static response
+                if not node_data.get("useTemplateAsReference"):
+                    return generate_static_response(node_data, nodes)
 
         # -------------------------------------------------------
         # 4.1 Handle Workflow Node Routing
