@@ -832,8 +832,10 @@ async def run_agent_endpoint(request: AgentRequest):
         
         # Get availability timezone if provided
         avail_tz = ""
+        tz_info = "UTC"
         if request.availability and request.availability.timezone:
-            avail_tz = f"- The assistant/system timezone is {request.availability.timezone}.\n"
+            tz_info = request.availability.timezone
+            avail_tz = f"- The assistant/system timezone is {tz_info}.\n"
             
         dynamic_context = (
             f"\n----------------------------\n"
@@ -843,6 +845,8 @@ async def run_agent_endpoint(request: AgentRequest):
             f"- The campaign_id for this call is {camp_id}.\n"
             f"- The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')} ({current_day}).\n"
             f"{avail_tz}"
+            f"- The user's timezone by default is assumed to be {tz_info} if not explicitly specified.\n"
+            f"- Default meeting duration is 30mins, if not explicitly specified.\n"
             #f"- CURRENT NODE: {current_node}.\n"
         )
 
