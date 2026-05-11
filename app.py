@@ -215,9 +215,9 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
     
     lines = summary_text.split('\n')
     for line in lines:
-        # Match ISO timestamps
-        match = re.search(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s*→\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)', line)
-        if match:
+        # Match all ISO timestamps in the line
+        matches = re.finditer(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s*→\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)', line)
+        for match in matches:
             start_str, end_str = match.groups()
             # replace Z with +00:00 for fromisoformat compatibility
             start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
