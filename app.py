@@ -239,7 +239,83 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
     return False, f"The requested time {params.date} at {params.time} ({tz_str}) is outside of the available UTC slots. Please check the 'availability' provided in the request context and suggest a different time to the user."
 
 
-def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None, protocol: str = "whatsapp", availability: Optional[AvailabilityModel] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
+async def generate_start_call_variation(response_content: WhatsAppResponse, node_data: Dict[str, Any]) -> None:
+    """
+    Generates a professional variation of the Start Call email template using GPT-4o-mini.
+    """
+    if not node_data.get("useTemplateAsReference"):
+        return
+
+    logger.info("Generating Start Call variation using GPT-4o-mini...")
+    try:
+        orig_subject = node_data.get("emailTemplateSubject") or ""
+        orig_body = node_data.get("emailTemplateContent") or ""
+        
+        variation_prompt = f"""
+        generate a new outreach email based on sample email below. understand the subject and theme and generate a new variation distinctly different keeping the meaning same to avoid being tagged as spam and sound very human. 
+        change opening sentences, paragraphs, usage of words.
+        generate both subject and email
+                
+        Sample:
+        SUBJECT: {orig_subject}
+        EMAIL BODY: {orig_body}
+        
+        RULES:
+        1. Keep placeholders in original subject and body (e.g. {{{{first_name}}}}, {{{{your_name}}}}) EXACTLY as they are.
+        2. Respond ONLY with a valid JSON object.
+        3. Do NOT create, remove, rename, or modify placeholders.
+        4. Maintain the same overall intent and professional tone.
+        5. The rewritten version must feel naturally different from the original.
+        6. Use concise, business-professional language.
+        7. Do NOT include markdown, explanations, comments, or code fences.
+
+        STRICT EMAIL HTML FORMAT:
+        - Use ONLY: <p>, <br>, <strong>, <em>, <ul>, <li>
+        - Each paragraph MUST be in <p> tags.
+        - Spacing MUST be natural separate <p> tags.
+        
+        JSON STRUCTURE:
+        {{
+            "subject": "...",
+            "body": "..."
+        }}
+        """
+        
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gpt-4.1-mini",
+            "messages": [
+                {"role": "system", "content": "you are very good at crafting natural sounding email. You provide ONLY raw JSON output. No conversation. No markdown blocks. No text before or after the JSON object."},
+                {"role": "user", "content": variation_prompt}
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 1.0,
+            "max_tokens": 1000
+        }
+        resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+        resp.raise_for_status()
+        raw_content = resp.json()["choices"][0]["message"]["content"].strip()
+        
+        # Strip markdown code blocks if the LLM ignores the "no markdown" rule
+        if raw_content.startswith("```"):
+            raw_content = re.sub(r'^```(?:json)?\n?|\n?```$', '', raw_content, flags=re.MULTILINE)
+        
+        parsed_variation = json.loads(raw_content)
+        
+        response_content.emailSubject = parsed_variation.get("subject")
+        response_content.responseText = parsed_variation.get("body")
+        response_content.waTemplateContent = parsed_variation.get("body")
+        logger.info("Start Call variation successfully generated.")
+        
+    except Exception as e:
+        logger.error(f"Failed to generate Start Call variation: {e}")
+        # Fallback is to keep existing content
+
+
+async def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None, protocol: str = "whatsapp", availability: Optional[AvailabilityModel] = None, workflow: Optional[Dict[str, Any]] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
     """
     Validates the WhatsAppResponse object, applies auto-fixes for common issues,
     and returns a critique if critical constraints are violated.
@@ -283,9 +359,6 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
     has_text = bool(response_content.responseText)
     has_template = bool(response_content.responseWATemplate)
 
-    # if has_text and has_template:
-    #     critical_errors.append("Both 'responseText' and 'responseWATemplate' are set. They are mutually exclusive. Use only one.")
-
     # B. Minimum Response Requirement
     has_file = bool(response_content.fileAssetId)
     has_save = bool(response_content.saveDataVariable)
@@ -294,7 +367,6 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
     is_nudge = False
     if chat_history and len(chat_history) > 0:
         last_msg = chat_history[-1]
-        print(f"DEBUG: last_msg: {last_msg}")
         if last_msg.get("content") == "merakle-signal-nudge-notification":
             is_nudge = True
 
@@ -310,9 +382,6 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
                 "- The decision node itself should NOT produce user-facing output; the response MUST come from the executed target node.\n"
                 "- If input is unclear, use fallback path and execute fallback node immediately."
             )
-
-    #if has_save:
-    #    critical_errors.append("Data is saved. Immediately proceed to next node as per conversation flow.")
 
     if protocol.upper() == "EMAIL":
         if has_file and not has_text:
@@ -331,10 +400,16 @@ def validate_and_fix_response(response_content: Any, current_node: str = "", cha
         if not is_available:
             critical_errors.append(error_msg)
 
-    print(f"DEBUG: Current Node is a Decision Node: {current_node}")
+    # E. Start Call Restriction
+    if current_node == "Start Call" and response_content.appointment:
+        critical_errors.append("When 'current_node' is 'Start Call', the 'appointment' property must not be set.")
 
-
-    # --- 3. Final Result ---
+    # --- 3. Start Call Variation Logic ---
+    if not critical_errors and current_node == "Start Call" and workflow:
+        nodes = workflow.get("nodes", [])
+        node = next((n for n in nodes if str(n.get("data", {}).get("label")) == "Start Call"), None)
+        if node:
+            await generate_start_call_variation(response_content, node.get("data", {}))
 
     if critical_errors:
         critique = "The output is invalid due to the following reasons: \n- " + "\n- ".join(critical_errors)
@@ -873,7 +948,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
 
             # Use Python-based validation and auto-fixing
-            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.chatHistory, protocol, request.availability)
+            fixed_response, is_valid, critique = await validate_and_fix_response(response.content, current_node, request.chatHistory, protocol, request.availability, request.callWorkflow)
 
             if is_valid:
                 final_validated_output = fixed_response
