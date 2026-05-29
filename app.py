@@ -556,7 +556,8 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
         """Returns a future timestamp based on the user's specified wait criteria. This tool should only be called when explicitly instructed by a Step in the workflow."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
 
-        ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        ist_now = datetime.now(timezone.utc)
+        #ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         today_date = ist_now.strftime("%Y-%m-%d")
         tomorrow_date = (ist_now + timedelta(days=1)).strftime("%Y-%m-%d")
         current_date_time = ist_now.strftime("%Y-%m-%dT%H:%M:%S")
@@ -650,6 +651,14 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
 app = FastAPI()
 
 
+class FollowUpModel(BaseModel):
+    templateId: Optional[str] = None
+    content: Optional[str] = None
+    subject: Optional[str] = None
+    step: Optional[str] = None
+    placeholders: List[str] = Field(default_factory=list)
+
+
 class AgentRequest(BaseModel):
     accountId: Any
     campaignId: Any
@@ -660,16 +669,27 @@ class AgentRequest(BaseModel):
     callWorkflow: Optional[Dict[str, Any]] = None
     protocol: Any
     availability: Optional[AvailabilityModel] = None
+    followUp: Optional[FollowUpModel] = None
 
 
 # -------------------------------------------------------
 # 1.2. Static Response Generator
 # -------------------------------------------------------
 
-def generate_static_response(node_data: dict, nodes: list) -> WhatsAppResponse:
+def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None) -> WhatsAppResponse:
     """
-    Generates a WhatsAppResponse directly from node data without LLM intervention.
+    Generates a WhatsAppResponse directly from node data or followUp object without LLM intervention.
     """
+    if followUp:
+        return WhatsAppResponse(
+            responseWATemplate=followUp.templateId,
+            waTemplateContent=followUp.content,
+            waTemplateParams=followUp.placeholders or [],
+            emailSubject=followUp.subject,
+            responseText=followUp.content,
+            nextNode=followUp.step
+        )
+
     placeholders = (
         node_data.get("whatsappTemplatePlaceholders")
         or node_data.get("emailTemplatePlaceholders")
@@ -783,6 +803,10 @@ async def run_agent_endpoint(request: AgentRequest):
                 # Check if we should use the template as reference (LLM) or as a static response
                 if not node_data.get("useTemplateAsReference"):
                     return generate_static_response(node_data, nodes)
+
+        if last_msg_content == "merakle-signal-unresponsive-user-trigger-follow-up":
+            logger.info("Unresponsive user signal detected. Generating follow-up response.")
+            return generate_static_response({}, [], followUp=request.followUp)
 
         # -------------------------------------------------------
         # 4.1 Handle Workflow Node Routing
