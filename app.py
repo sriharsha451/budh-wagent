@@ -2,7 +2,7 @@ import os
 import httpx
 import uuid
 import json
-from typing import List, Any, Dict, Optional
+from typing import List, Any, Dict, Optional, Literal
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from agno.agent import Agent
@@ -59,6 +59,16 @@ class AppointmentModel(BaseModel):
     params: AppointmentParams = Field(default_factory=AppointmentParams)
 
 
+class InterestLevelModel(BaseModel):
+    classification: str = Field(
+        ..., description="The prospect's interest level classification (e.g., INTERESTED, NEUTRAL, NOT_INTERESTED, UNSUBSCRIBE)."
+    )
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score from 0.0 to 1.0.")
+    reason: str = Field(..., description="Short explanation based on the prospect's message.")
+    unsubscribe_detected: bool = Field(..., description="Whether an unsubscribe intent was detected.")
+    do_not_contact: bool = Field(..., description="Whether the prospect should not be contacted again.")
+
+
 class WhatsAppResponse(BaseModel):
     responseText: Optional[str] = Field(None, description="AI's message/response to the user if applicable")
     responseWATemplate: Optional[str] = Field(None, description="WhatsApp template ID to respond with, if applicable")
@@ -77,6 +87,7 @@ class WhatsAppResponse(BaseModel):
     )
     emailSubject: Optional[str] = Field(None, description="Subject line for email responses, if applicable")
     appointment: Optional[AppointmentModel] = Field(None)
+    userInterestLevel: Optional[InterestLevelModel] = Field(None, description="The prospect's interest level analysis.")
 
 
 class ToolParameter(BaseModel):
