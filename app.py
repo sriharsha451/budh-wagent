@@ -940,6 +940,7 @@ async def run_agent_endpoint(request: AgentRequest):
         # Dynamic context moved here to improve prompt caching of the system instructions
         now = datetime.now()
         current_day = now.strftime("%A")
+        tomorrow_day = (now + timedelta(days=1)).strftime("%A")
         
         # Get availability timezone if provided
         avail_tz = ""
@@ -954,7 +955,8 @@ async def run_agent_endpoint(request: AgentRequest):
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
             f"- The campaign_id for this call is {camp_id}.\n"
-            f"- The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')} ({current_day}).\n"
+            f"- The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')}.\n"
+            f"- Today is {current_day} and tomorrow is {tomorrow_day}.\n"
             f"{avail_tz}"
             f"- The user's timezone by default is assumed to be {tz_info} if not explicitly specified.\n"
             f"- Default meeting duration is 30mins, if not explicitly specified.\n"
