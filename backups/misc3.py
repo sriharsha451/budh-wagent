@@ -2,7 +2,7 @@ import os
 import httpx
 import uuid
 import json
-from typing import List, Any, Dict, Optional, Literal
+from typing import List, Any, Dict, Optional
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from agno.agent import Agent
@@ -10,17 +10,6 @@ from agno.tools import tool
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from datetime import datetime, timezone, timedelta
-import re
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:
-    # Fallback for Python versions < 3.9
-    try:
-        from pytz import timezone as PyTZZoneInfo
-        def ZoneInfo(tz): return PyTZZoneInfo(tz)
-    except ImportError:
-        ZoneInfo = None
-
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -41,34 +30,6 @@ http_client = httpx.AsyncClient(timeout=30)
 # 1. Structured Output Schema
 # -------------------------------------------------------
 
-class AppointmentParams(BaseModel):
-    subject: Optional[str] = Field(None, description="Subject of the appointment")
-    appointment_id: Optional[str] = Field(None, description="Unique ID of the appointment, if updating/deleting")
-    title: Optional[str] = Field(None, description="Title of the appointment")
-    date: Optional[str] = Field(None, description="Date of the appointment (e.g. YYYY-MM-DD)")
-    time: Optional[str] = Field(None, description="Time of the appointment")
-    duration_minutes: Optional[int] = Field(None, description="Duration of the meeting in minutes")
-    person: Optional[str] = Field(None, description="Person involved in the appointment")
-    notes: Optional[str] = Field(None, description="Additional notes or description")
-    emailBody: Optional[str] = Field(None, description="Body content for email notifications related to the appointment")
-    timezone: Optional[str] = Field(None, description="Timezone for the appointment (e.g. UTC, IST, America/New_York)")
-
-
-class AppointmentModel(BaseModel):
-    action_name: str = Field(..., description="Action to perform: create, update, or delete")
-    params: AppointmentParams = Field(default_factory=AppointmentParams)
-
-
-class InterestLevelModel(BaseModel):
-    classification: str = Field(
-        ..., description="The prospect's interest level classification (e.g., INTERESTED, NEUTRAL, NOT_INTERESTED, UNSUBSCRIBE)."
-    )
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score from 0.0 to 1.0.")
-    reason: str = Field(..., description="Short explanation based on the prospect's message.")
-    unsubscribe_detected: bool = Field(..., description="Whether an unsubscribe intent was detected.")
-    do_not_contact: bool = Field(..., description="Whether the prospect should not be contacted again.")
-
-
 class WhatsAppResponse(BaseModel):
     responseText: Optional[str] = Field(None, description="AI's message/response to the user if applicable")
     responseWATemplate: Optional[str] = Field(None, description="WhatsApp template ID to respond with, if applicable")
@@ -85,9 +46,6 @@ class WhatsAppResponse(BaseModel):
         False,
         description="Set to true if there are no more questions to ask the user and the conversation has reached its conclusion."
     )
-    emailSubject: Optional[str] = Field(None, description="Subject line for email responses, if applicable")
-    appointment: Optional[AppointmentModel] = Field(None)
-    userInterestLevel: Optional[InterestLevelModel] = Field(None, description="The prospect's interest level analysis.")
 
 
 class ToolParameter(BaseModel):
@@ -101,232 +59,11 @@ class ToolInfo(BaseModel):
     params: List[ToolParameter]
 
 
-class AvailabilityModel(BaseModel):
-    summaryUtc: Optional[Any] = Field(None, description="Summary of availability in UTC")
-    activeHoursUtc: Optional[Any] = Field(None, description="Active hours in UTC")
-    timezone: Optional[str] = Field(None, description="User's local IANA timezone")
-
-
 # -------------------------------------------------------
 # 1.1. Deterministic Validation Logic
 # -------------------------------------------------------
 
-def load_tz_mapping():
-    """
-    Loads timezone mapping from timezones.json.
-    Maps abbr, value, and text to the first IANA key in the 'utc' list.
-    """
-    mapping = {}
-    try:
-        with open("timezones.json", "r", encoding="utf-8") as f:
-            tz_data = json.load(f)
-            for entry in tz_data:
-                iana_keys = entry.get("utc", [])
-                if not iana_keys:
-                    continue
-                
-                primary_iana = iana_keys[0]
-                
-                # Map abbreviation
-                abbr = entry.get("abbr")
-                if abbr:
-                    mapping[abbr.upper()] = primary_iana
-                
-                # Map value
-                val = entry.get("value")
-                if val:
-                    mapping[val.upper()] = primary_iana
-                
-                # Map text (description)
-                text = entry.get("text")
-                if text:
-                    mapping[text.upper()] = primary_iana
-                    
-    except Exception as e:
-        logger.error(f"Failed to load timezones.json: {e}")
-    
-    # Ensure common ones are present as fallback/override
-    overrides = {
-        "IST": "Asia/Kolkata",
-        "PST": "America/Los_Angeles",
-        "PDT": "America/Los_Angeles",
-        "EST": "America/New_York",
-        "EDT": "America/New_York",
-        "CST": "America/Chicago",
-        "CDT": "America/Chicago",
-        "MST": "America/Denver",
-        "MDT": "America/Denver",
-    }
-    mapping.update(overrides)
-    return mapping
-
-# Global TZ mapping
-TZ_MAPPING = load_tz_mapping()
-
-
-def is_appointment_available(appointment: AppointmentModel, availability: Optional[AvailabilityModel]) -> tuple[bool, str]:
-    """
-    Checks if the requested appointment time is within the provided availability slots.
-    """
-    logger.debug(f"is_appointment_available - Appointment: {appointment.model_dump_json() if appointment else 'None'}")
-    logger.debug(f"is_appointment_available - Availability: {availability.model_dump_json() if availability else 'None'}")
-
-    if not availability or not availability.summaryUtc:
-        logger.debug("No availability or summaryUtc provided. Skipping check.")
-        return True, ""  # No availability info provided, skip check
-
-    params = appointment.params
-    if not params.date or not params.time:
-        logger.debug(f"Missing date ({params.date}) or time ({params.time}). Skipping check.")
-        return True, ""  # Missing date/time, can't check
-
-    # Try to get timezone
-    tz_str = params.timezone or "UTC"
-    
-    # Map common abbreviations/names to IANA keys
-    iana_tz = TZ_MAPPING.get(tz_str.upper(), tz_str)
-    logger.debug(f"Resolved timezone: {tz_str} -> {iana_tz}")
-    
-    if ZoneInfo is None:
-        logger.warning("Timezone validation skipped: neither 'zoneinfo' nor 'pytz' is available.")
-        return True, ""
-
-    try:
-        # Normalize time format if needed (e.g. 3 PM -> 15:00)
-        time_str = params.time
-        if "AM" in time_str.upper() or "PM" in time_str.upper():
-            dt_parse = datetime.strptime(time_str, "%I:%M %p")
-            time_str = dt_parse.strftime("%H:%M")
-        
-        dt_str = f"{params.date} {time_str}"
-        # Parse as naive first, then attach TZ
-        naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-        aware_dt = naive_dt.replace(tzinfo=ZoneInfo(iana_tz))
-        utc_dt = aware_dt.astimezone(timezone.utc)
-        logger.debug(f"Appointment time: {dt_str} ({tz_str}) -> UTC: {utc_dt}")
-    except Exception as e:
-        logger.error(f"Timezone resolution error: {e}")
-        return False, f"Invalid date/time/timezone format '{tz_str}': {str(e)}. Ensure you use valid IANA timezone names (e.g., 'Asia/Kolkata', 'America/Los_Angeles')."
-
-    # Parse summaryUtc
-    # Expected format: " - 2026-05-11 (UTC ISO Slots): 2026-05-11T03:30:00Z → 2026-05-11T11:30:00Z"
-    slots = []
-    
-    # Handle cases where summaryUtc might be a list or other structure due to Any type
-    summary_text = ""
-    if isinstance(availability.summaryUtc, str):
-        summary_text = availability.summaryUtc
-    elif isinstance(availability.summaryUtc, list):
-        summary_text = "\n".join([str(item) for item in availability.summaryUtc])
-    elif isinstance(availability.summaryUtc, dict):
-        # Look for common keys if it's a dict
-        summary_text = str(availability.summaryUtc.get("summary") or availability.summaryUtc.get("text") or availability.summaryUtc)
-    else:
-        summary_text = str(availability.summaryUtc) if availability.summaryUtc else ""
-    
-    lines = summary_text.split('\n')
-    for line in lines:
-        # Match all ISO timestamps in the line
-        matches = re.finditer(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s*→\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)', line)
-        for match in matches:
-            start_str, end_str = match.groups()
-            # replace Z with +00:00 for fromisoformat compatibility
-            start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-            end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
-            slots.append((start_dt, end_dt))
-    
-    if not slots:
-        logger.warning("No availability slots could be parsed from summaryUtc.")
-        return True, ""
-        
-    logger.debug(f"Checking {utc_dt} against {len(slots)} parsed slots.")
-    for start_dt, end_dt in slots:
-        # Check if appointment start time is within the slot
-        if start_dt <= utc_dt < end_dt:
-            logger.debug(f"Match found in slot: {start_dt} to {end_dt}")
-            return True, ""
-            
-    logger.debug(f"No match found for {utc_dt} in any slot.")
-    return False, f"The requested time {params.date} at {params.time} ({tz_str}) is outside of the available UTC slots. Please check the 'availability' provided in the request context and suggest a different time to the user."
-
-
-async def generate_start_call_variation(response_content: WhatsAppResponse, node_data: Dict[str, Any]) -> None:
-    """
-    Generates a professional variation of the Start Call email template using GPT-4o-mini.
-    """
-    if not node_data.get("useTemplateAsReference"):
-        return
-
-    logger.info("Generating Start Call variation using GPT-4o-mini...")
-    try:
-        orig_subject = node_data.get("emailTemplateSubject") or ""
-        orig_body = node_data.get("emailTemplateContent") or ""
-        
-        variation_prompt = f"""
-        generate a new outreach email based on sample email below. understand the subject and theme and generate a new variation distinctly different keeping the meaning same to avoid being tagged as spam and sound very human. 
-        change opening sentences, paragraphs, usage of words.
-        generate both subject and email
-                
-        Sample:
-        SUBJECT: {orig_subject}
-        EMAIL BODY: {orig_body}
-        
-        RULES:
-        1. Keep placeholders in original subject and body (e.g. {{{{first_name}}}}, {{{{your_name}}}}) EXACTLY as they are.
-        2. Respond ONLY with a valid JSON object.
-        3. Do NOT create, remove, rename, or modify placeholders.
-        4. Maintain the same overall intent and professional tone.
-        5. The rewritten version must feel naturally different from the original.
-        6. Use concise, business-professional language.
-        7. Do NOT include markdown, explanations, comments, or code fences.
-
-        STRICT EMAIL HTML FORMAT:
-        - Use ONLY: <p>, <br>, <strong>, <em>, <ul>, <li>
-        - Each paragraph MUST be in <p> tags.
-        - Spacing MUST be natural separate <p> tags.
-        
-        JSON STRUCTURE:
-        {{
-            "subject": "...",
-            "body": "..."
-        }}
-        """
-        
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-4.1-mini",
-            "messages": [
-                {"role": "system", "content": "you are very good at crafting natural sounding email. You provide ONLY raw JSON output. No conversation. No markdown blocks. No text before or after the JSON object."},
-                {"role": "user", "content": variation_prompt}
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 1.0,
-            "max_tokens": 1000
-        }
-        resp = await http_client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-        resp.raise_for_status()
-        raw_content = resp.json()["choices"][0]["message"]["content"].strip()
-        
-        # Strip markdown code blocks if the LLM ignores the "no markdown" rule
-        if raw_content.startswith("```"):
-            raw_content = re.sub(r'^```(?:json)?\n?|\n?```$', '', raw_content, flags=re.MULTILINE)
-        
-        parsed_variation = json.loads(raw_content)
-        
-        response_content.emailSubject = parsed_variation.get("subject")
-        response_content.responseText = parsed_variation.get("body")
-        response_content.waTemplateContent = parsed_variation.get("body")
-        logger.info("Start Call variation successfully generated.")
-        
-    except Exception as e:
-        logger.error(f"Failed to generate Start Call variation: {e}")
-        # Fallback is to keep existing content
-
-
-async def validate_and_fix_response(response_content: Any, current_node: str = "", chat_history: Optional[List[Dict[str, Any]]] = None, protocol: str = "whatsapp", availability: Optional[AvailabilityModel] = None, workflow: Optional[Dict[str, Any]] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
+def validate_and_fix_response(response_content: Any, current_node: str = "", call_workflow: Optional[Dict[str, Any]] = None) -> tuple[Optional[WhatsAppResponse], bool, Optional[str]]:
     """
     Validates the WhatsAppResponse object, applies auto-fixes for common issues,
     and returns a critique if critical constraints are violated.
@@ -349,7 +86,7 @@ async def validate_and_fix_response(response_content: Any, current_node: str = "
     string_fields = [
         "responseText", "responseWATemplate", "saveDataVariable",
         "saveDataValue", "waTemplateContent", "fileAssetId",
-        "setNextWaitUntil", "nextNode", "emailSubject"
+        "setNextWaitUntil", "nextNode"
     ]
     for field in string_fields:
         val = getattr(response_content, field)
@@ -366,6 +103,31 @@ async def validate_and_fix_response(response_content: Any, current_node: str = "
 
     critical_errors = []
 
+    # Workflow-based validation
+    if call_workflow and current_node:
+        nodes = call_workflow.get("nodes", [])
+        # Find the node matching current_node label
+        node = next((n for n in nodes if n.get("data", {}).get("label") == str(current_node)), None)
+        
+        if node:
+            node_data = node.get("data", {})
+            
+            # Check for required saveDataVariable
+            expected_save_var = node_data.get("saveToVariable")
+            if expected_save_var:
+                if response_content.saveDataVariable != expected_save_var:
+                    critical_errors.append(f"Node '{current_node}' requires 'saveDataVariable' to be set to '{expected_save_var}'.")
+                
+                # If saveDataVariable is required/set, saveDataValue must also be set
+                if not response_content.saveDataValue:
+                    critical_errors.append(f"Node '{current_node}' requires 'saveDataValue' to be provided when saving to variable '{expected_save_var}'.")
+
+            # Check for required fileAssetId
+            expected_file_id = node_data.get("sendFileToUserAssetId")
+            if expected_file_id:
+                if response_content.fileAssetId != expected_file_id:
+                    critical_errors.append(f"Node '{current_node}' requires 'fileAssetId' to be set to '{expected_file_id}'.")
+
     # A. Mutual Exclusivity: responseText vs responseWATemplate
     has_text = bool(response_content.responseText)
     has_template = bool(response_content.responseWATemplate)
@@ -374,14 +136,7 @@ async def validate_and_fix_response(response_content: Any, current_node: str = "
     has_file = bool(response_content.fileAssetId)
     has_save = bool(response_content.saveDataVariable)
 
-    # Check for "merakle-signal-nudge-notification" in chat_history
-    is_nudge = False
-    if chat_history and len(chat_history) > 0:
-        last_msg = chat_history[-1]
-        if last_msg.get("content") == "merakle-signal-nudge-notification":
-            is_nudge = True
-
-    if (not (has_text or has_template)) and not (has_save) and not is_nudge:
+    if (not (has_text or has_template)) and not (has_save):
         critical_errors.append("You must provide a value for 'responseText', 'responseWATemplate'. Both the params cannot be NULL or empty string at the same time. ")
         # D. Decision Node Rules
         if "Decision" in current_node:
@@ -394,33 +149,17 @@ async def validate_and_fix_response(response_content: Any, current_node: str = "
                 "- If input is unclear, use fallback path and execute fallback node immediately."
             )
 
-    if protocol.upper() == "EMAIL":
-        if has_file and not has_text:
-            critical_errors.append("You have provided 'fileAssetId' but missing 'responseText'. You must provide 'responseText' with appropriate message to communicate with the user while sending file.")
-    else:
-        if has_file and not (has_text or has_template):
-            critical_errors.append("You have provided 'fileAssetId' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' with appropriate message to communicate with the user while sending file.")
+    if has_file and not (has_text or has_template):
+        critical_errors.append("You have provided 'fileAssetId' but missing 'responseText' or 'responseWATemplate'. You must provide either 'responseText' or 'responseWATemplate' with appropriate message to communicate with the user while sending file.")
 
     # C. Template Integrity
     if has_template and not response_content.waTemplateContent:
         critical_errors.append("'responseWATemplate' is provided but 'waTemplateContent' is missing. You must provide the rendered content of the template.")
 
-    # D. Appointment Availability Check
-    if response_content.appointment and availability:
-        is_available, error_msg = is_appointment_available(response_content.appointment, availability)
-        if not is_available:
-            critical_errors.append(error_msg)
+    print(f"DEBUG: Current Node: {current_node}")
 
-    # E. Start Call Restriction
-    if current_node == "Start Call" and response_content.appointment:
-        critical_errors.append("When 'current_node' is 'Start Call', the 'appointment' property must not be set.")
 
-    # --- 3. Start Call Variation Logic ---
-    if not critical_errors and current_node == "Start Call" and workflow:
-        nodes = workflow.get("nodes", [])
-        node = next((n for n in nodes if str(n.get("data", {}).get("label")) == "Start Call"), None)
-        if node:
-            await generate_start_call_variation(response_content, node.get("data", {}))
+    # --- 3. Final Result ---
 
     if critical_errors:
         critique = "The output is invalid due to the following reasons: \n- " + "\n- ".join(critical_errors)
@@ -567,8 +306,7 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
         """Returns a future timestamp based on the user's specified wait criteria. This tool should only be called when explicitly instructed by a Step in the workflow."""
         print(f"\n--- TOOL USER QUERY (textgen_trigger_node_wait) ---\n{query}\n--------------------------------------------------\n")
 
-        ist_now = datetime.now(timezone.utc)
-        #ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        ist_now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         today_date = ist_now.strftime("%Y-%m-%d")
         tomorrow_date = (ist_now + timedelta(days=1)).strftime("%Y-%m-%d")
         current_date_time = ist_now.strftime("%Y-%m-%dT%H:%M:%S")
@@ -642,8 +380,10 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
             timestamp = timestamp.strip('`').strip('"').strip("'").strip()
             print(f"DEBUG: Extracted Timestamp: {timestamp}")
 
-            return timestamp
-
+            return json.dumps({
+                "setNextWaitUntil": timestamp,
+                "instruction": f"Set setNextWaitUntil to {timestamp}"
+            })
         except Exception as e:
             logger.exception(f"Error in textgen_trigger_node_wait: {e}")
             return f"Error updating wait time: {str(e)}"
@@ -662,31 +402,6 @@ def get_tools(campaign_id: str, tool_cache: dict, chat_history: List[Dict[str, A
 app = FastAPI()
 
 
-class FollowUpModel(BaseModel):
-    templateId: Optional[str] = None
-    content: Optional[str] = None
-    subject: Optional[str] = None
-    step: Optional[str] = None
-    placeholders: List[str] = Field(default_factory=list)
-
-
-class ReminderPlaceholderModel(BaseModel):
-    value: Optional[str] = None
-
-
-class ReminderModel(BaseModel):
-    signal: Optional[str] = None
-    offsetValue: Optional[int] = None
-    offsetUnit: Optional[str] = None
-    offsetDirection: Optional[str] = None
-    whatsappTemplateId: Optional[str] = None
-    whatsappTemplateContent: Optional[str] = None
-    emailTemplateId: Optional[str] = None
-    emailSubject: Optional[str] = None
-    emailBody: Optional[str] = None
-    placeholders: List[ReminderPlaceholderModel] = Field(default_factory=list)
-
-
 class AgentRequest(BaseModel):
     accountId: Any
     campaignId: Any
@@ -695,75 +410,6 @@ class AgentRequest(BaseModel):
     chatHistory: List[Dict[str, Any]]
     templateSettings: Dict[str, Any]
     callWorkflow: Optional[Dict[str, Any]] = None
-    protocol: Any
-    availability: Optional[AvailabilityModel] = None
-    followUp: Optional[FollowUpModel] = None
-    reminders: List[ReminderModel] = Field(default_factory=list)
-
-
-# -------------------------------------------------------
-# 1.2. Static Response Generator
-# -------------------------------------------------------
-
-def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None, reminder: Optional[ReminderModel] = None, protocol: str = "WHATSAPP") -> WhatsAppResponse:
-    """
-    Generates a WhatsAppResponse directly from node data, followUp, or reminder object without LLM intervention.
-    """
-    if reminder:
-        if protocol.upper() in ["WEB", "EMAIL"]:
-            return WhatsAppResponse(
-                emailSubject=reminder.emailSubject,
-                responseText=reminder.emailBody,
-                responseWATemplate=None
-            )
-        else:  # WHATSAPP
-            return WhatsAppResponse(
-                responseWATemplate=reminder.whatsappTemplateId,
-                waTemplateContent=reminder.whatsappTemplateContent,
-                waTemplateParams=[p.value for p in reminder.placeholders if p.value is not None],
-                responseText=None
-            )
-
-    if followUp:
-        return WhatsAppResponse(
-            responseWATemplate=followUp.templateId,
-            waTemplateContent=followUp.content,
-            waTemplateParams=followUp.placeholders or [],
-            emailSubject=followUp.subject,
-            responseText=followUp.content,
-            nextNode=followUp.step
-        )
-
-    placeholders = (
-        node_data.get("whatsappTemplatePlaceholders")
-        or node_data.get("emailTemplatePlaceholders")
-        or []
-    )
-    params = []
-    if isinstance(placeholders, list):
-        # Extract the 'value' from each placeholder object
-        params = [str(p.get("value", "")) for p in placeholders]
-
-    next_node_id = node_data.get("nextNode")
-    target_label = None
-    if next_node_id:
-        target_node = next((n for n in nodes if str(n.get("id")) == str(next_node_id)), None)
-        if target_node:
-            target_label = target_node.get("data", {}).get("label")
-
-    is_end = next_node_id == "end-call" or target_label == "End Call"
-
-    return WhatsAppResponse(
-        responseText=node_data.get("messageContent") or node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"),
-        responseWATemplate=node_data.get("whatsappTemplateId") or node_data.get("emailTemplateId"),
-        saveDataVariable=node_data.get("saveToVariable"),
-        waTemplateParams=params,
-        waTemplateContent=node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"),
-        fileAssetId=node_data.get("sendFileToUserAssetId"),
-        nextNode=None if is_end else target_label,
-        isEndOfConversation=is_end,
-        emailSubject=node_data.get("emailTemplateSubject")
-    )
 
 
 @app.get("/discovery/tools", response_model=List[ToolInfo])
@@ -835,61 +481,12 @@ async def run_agent_endpoint(request: AgentRequest):
         camp_id = str(request.campaignId)
         logger.info(f"--- New Request: Task {task_id} and campaign id {camp_id}---")
 
-        last_msg_content = request.chatHistory[-1]["content"] if request.chatHistory else "Hi"
+        # Request-scoped tool cache
+        tool_cache = {}
 
         # Extract settings
         ts = request.templateSettings
         campaign_settings = ts.get("campaign_settings", {})
-        protocol = str(request.protocol or ts.get("protocol") or campaign_settings.get("protocol") or "WHATSAPP")
-
-        if last_msg_content == "merakle-signal-start-conversation-message":
-            logger.info("Start conversation signal detected. Using static response generator for 'Start Call' node.")
-            workflow = request.callWorkflow or {}
-            nodes = workflow.get("nodes", [])
-            node = next((n for n in nodes if str(n.get("data", {}).get("label")) == "Start Call"), None)
-            if node:
-                node_data = node.get("data", {})
-                # Check if we should use the template as reference (LLM) or as a static response
-                if not node_data.get("useTemplateAsReference"):
-                    return generate_static_response(node_data, nodes)
-
-        if last_msg_content == "merakle-signal-unresponsive-user-trigger-follow-up":
-            logger.info("Unresponsive user signal detected. Generating follow-up response.")
-            return generate_static_response({}, [], followUp=request.followUp)
-
-        if str(last_msg_content).startswith("merakle-signal-reminder-notification-"):
-            logger.info(f"Reminder signal detected: {last_msg_content}")
-            reminder = next((r for r in request.reminders if r.signal == last_msg_content), None)
-            if reminder:
-                return generate_static_response({}, [], reminder=reminder, protocol=protocol)
-
-        # -------------------------------------------------------
-        # 4.1 Handle Workflow Node Routing
-        # -------------------------------------------------------
-        # if request.callWorkflow and not str(last_msg_content).lower().startswith("merakle-"):
-        #     workflow = request.callWorkflow
-        #     nodes = workflow.get("nodes", [])
-        #     current_node_id = str(request.currentNode)
-        #     node = next((n for n in nodes if str(n.get("data", {}).get("label")) == current_node_id), None)
-
-        #     if node:
-        #         node_type = node.get("type")
-        #         node_data = node.get("data", {})
-        #         message_type = node_data.get("messageType")
-
-        #         # If current_node is type "decision", run the main agent (LLM)
-        #         # If current_node is type "standard", check messageType
-        #         if node_type == "decision":
-        #             logger.info(f"Node {current_node_id} is a decision node. Proceeding to LLM.")
-        #         elif node_type == "standard":
-        #             if message_type == "prompt":
-        #                 logger.info(f"Node {current_node_id} is a standard prompt node. Proceeding to LLM.")
-        #             else:
-        #                 logger.info(f"Node {current_node_id} is a standard non-prompt node. Generating static response.")
-        #                 return generate_static_response(node_data, nodes)
-        #         else:
-        #             logger.info(f"Node {current_node_id} has type '{node_type}'. Generating static response.")
-        #             return generate_static_response(node_data, nodes)
 
         # Use LLM model from campaign settings if present, else fallback to global DEFAULT_MODEL
         default_model = ts.get("model") or campaign_settings.get("use_llm_model") or DEFAULT_MODEL
@@ -944,7 +541,7 @@ async def run_agent_endpoint(request: AgentRequest):
             "api_key": OPENAI_API_KEY,
         }
         if is_gpt_5:
-            main_model_params["reasoning_effort"] = "low"
+            main_model_params["reasoning"] = {"effort": "none"}
         else:
             main_model_params["temperature"] = temperature
 
@@ -973,29 +570,14 @@ async def run_agent_endpoint(request: AgentRequest):
         last_msg_role = request.chatHistory[-1].get("role", "user").title() if request.chatHistory else "User"
 
         # Dynamic context moved here to improve prompt caching of the system instructions
-        now = datetime.now()
-        current_day = now.strftime("%A")
-        tomorrow_day = (now + timedelta(days=1)).strftime("%A")
-        
-        # Get availability timezone if provided
-        avail_tz = ""
-        tz_info = "UTC"
-        if request.availability and request.availability.timezone:
-            tz_info = request.availability.timezone
-            avail_tz = f"- The assistant/system timezone is {tz_info}.\n"
-            
         dynamic_context = (
             f"\n----------------------------\n"
             f"\n\nAdditional Context:\n"
             f"- The merakle_call_id for this call is {task_id}.\n"
             f"- The merakle_account_id for this call is {account_id}.\n"
             f"- The campaign_id for this call is {camp_id}.\n"
-            f"- The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')}.\n"
-            f"- Today is {current_day} and tomorrow is {tomorrow_day}.\n"
-            f"{avail_tz}"
-            f"- The user's timezone by default is assumed to be {tz_info} if not explicitly specified.\n"
-            f"- Default meeting duration is 30mins, if not explicitly specified.\n"
-            #f"- CURRENT NODE: {current_node}.\n"
+            f"- The current date and time is {datetime.now()}.\n"
+            f"- CURRENT NODE: {current_node}.\n"
         )
 
         full_prompt = chat_history_text  + f"{last_msg_role}: {last_msg_content}" + dynamic_context
@@ -1020,7 +602,7 @@ async def run_agent_endpoint(request: AgentRequest):
             logger.info(f"Running Deterministic Validator (Attempt {current_attempt + 1})...")
 
             # Use Python-based validation and auto-fixing
-            fixed_response, is_valid, critique = await validate_and_fix_response(response.content, current_node, request.chatHistory, protocol, request.availability, request.callWorkflow)
+            fixed_response, is_valid, critique = validate_and_fix_response(response.content, current_node, request.callWorkflow)
 
             if is_valid:
                 final_validated_output = fixed_response
@@ -1032,7 +614,6 @@ async def run_agent_endpoint(request: AgentRequest):
                 logger.warning(f"Validation failed: {critique}. Retrying main agent...")
                 retry_prompt = full_prompt + f"\n\nCRITIQUE: Your previous response was invalid.\n{critique}\n\nPlease correct your output strictly according to the rules."
                 response = await agent.arun(retry_prompt)
-                final_validated_output = response.content
 
         # -------------------------------------------------------
         # 9. Return Structured Response
