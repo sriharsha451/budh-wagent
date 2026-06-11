@@ -713,25 +713,18 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
         if protocol.upper() in ["WEB", "EMAIL"]:
             subject = reminder.emailSubject or ""
             body = reminder.emailBody or ""
-            for p_dict in reminder.placeholders:
-                for k, v in p_dict.items():
-                    placeholder = f"{{{{{k}}}}}"
-                    subject = subject.replace(placeholder, str(v))
-                    body = body.replace(placeholder, str(v))
+            for i, p_dict in enumerate(reminder.placeholders):
+                val = p_dict.get("value", "")
+                placeholder = f"{{{{{i+1}}}}}"
+                subject = subject.replace(placeholder, str(val))
+                body = body.replace(placeholder, str(val))
             return WhatsAppResponse(
                 emailSubject=subject,
                 responseText=body,
                 responseWATemplate=None
             )
         else:  # WHATSAPP
-            params = []
-            for p_dict in reminder.placeholders:
-                if "value" in p_dict:
-                    params.append(str(p_dict["value"]))
-                else:
-                    # Fallback to taking all values if 'value' key is not present
-                    params.extend([str(v) for v in p_dict.values()])
-
+            params = [str(p_dict.get("value", "")) for p_dict in reminder.placeholders]
             return WhatsAppResponse(
                 responseWATemplate=reminder.whatsappTemplateId,
                 waTemplateContent=reminder.whatsappTemplateContent,
