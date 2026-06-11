@@ -684,7 +684,7 @@ class ReminderModel(BaseModel):
     emailTemplateId: Optional[str] = None
     emailSubject: Optional[str] = None
     emailBody: Optional[str] = None
-    placeholders: List[ReminderPlaceholderModel] = Field(default_factory=list)
+    placeholders: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentRequest(BaseModel):
@@ -711,16 +711,31 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
     """
     if reminder:
         if protocol.upper() in ["WEB", "EMAIL"]:
+            subject = reminder.emailSubject or ""
+            body = reminder.emailBody or ""
+            for p_dict in reminder.placeholders:
+                for k, v in p_dict.items():
+                    placeholder = f"{{{{{k}}}}}"
+                    subject = subject.replace(placeholder, str(v))
+                    body = body.replace(placeholder, str(v))
             return WhatsAppResponse(
-                emailSubject=reminder.emailSubject,
-                responseText=reminder.emailBody,
+                emailSubject=subject,
+                responseText=body,
                 responseWATemplate=None
             )
         else:  # WHATSAPP
+            params = []
+            for p_dict in reminder.placeholders:
+                if "value" in p_dict:
+                    params.append(str(p_dict["value"]))
+                else:
+                    # Fallback to taking all values if 'value' key is not present
+                    params.extend([str(v) for v in p_dict.values()])
+
             return WhatsAppResponse(
                 responseWATemplate=reminder.whatsappTemplateId,
                 waTemplateContent=reminder.whatsappTemplateContent,
-                waTemplateParams=[p.value for p in reminder.placeholders if p.value is not None],
+                waTemplateParams=params,
                 responseText=None
             )
 
