@@ -699,32 +699,67 @@ class AgentRequest(BaseModel):
     availability: Optional[AvailabilityModel] = None
     followUp: Optional[FollowUpModel] = None
     reminders: List[ReminderModel] = Field(default_factory=list)
+    contactPayload: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 # -------------------------------------------------------
 # 1.2. Static Response Generator
 # -------------------------------------------------------
 
-def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None, reminder: Optional[ReminderModel] = None, protocol: str = "WHATSAPP") -> WhatsAppResponse:
+def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None, reminder: Optional[ReminderModel] = None, protocol: str = "WHATSAPP", contact_payload: Optional[Dict[str, Any]] = None) -> WhatsAppResponse:
     """
     Generates a WhatsAppResponse directly from node data, followUp, or reminder object without LLM intervention.
     """
+
+    def apply_contact_placeholders(text: str, payload: Optional[Dict[str, Any]]) -> str:
+        if not payload or not text:
+            return text
+        
+        # Replace top-level contact fields
+        for k, v in payload.items():
+            if k == "additional_attributes":
+                continue
+            placeholder = f"{{{{{k}}}}}"
+            text = text.replace(placeholder, str(v) if v is not None else "")
+        
+        # Replace additional attributes (direct key access)
+        attrs = payload.get("additional_attributes")
+        if isinstance(attrs, dict):
+            for k, v in attrs.items():
+                placeholder = f"{{{{{k}}}}}"
+                text = text.replace(placeholder, str(v) if v is not None else "")
+        
+        return text
+
     if reminder:
         if protocol.upper() in ["WEB", "EMAIL"]:
             subject = reminder.emailSubject or ""
             body = reminder.emailBody or ""
+            
+            # 1. First apply index-based replacements from reminder.placeholders
             for i, p_dict in enumerate(reminder.placeholders):
                 val = p_dict.get("value", "")
                 placeholder = f"{{{{{i+1}}}}}"
                 subject = subject.replace(placeholder, str(val))
                 body = body.replace(placeholder, str(val))
+            
+            # 2. Then apply contact-based replacements
+            subject = apply_contact_placeholders(subject, contact_payload)
+            body = apply_contact_placeholders(body, contact_payload)
+            
             return WhatsAppResponse(
                 emailSubject=subject,
                 responseText=body,
                 responseWATemplate=None
             )
         else:  # WHATSAPP
-            params = [str(p_dict.get("value", "")) for p_dict in reminder.placeholders]
+            params = []
+            for p_dict in reminder.placeholders:
+                val = str(p_dict.get("value", ""))
+                # WhatsApp params can also contain contact placeholders
+                val = apply_contact_placeholders(val, contact_payload)
+                params.append(val)
+                
             return WhatsAppResponse(
                 responseWATemplate=reminder.whatsappTemplateId,
                 waTemplateContent=reminder.whatsappTemplateContent,
@@ -733,12 +768,13 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
             )
 
     if followUp:
+        response_text = apply_contact_placeholders(followUp.content or "", contact_payload)
         return WhatsAppResponse(
             responseWATemplate=followUp.templateId,
             waTemplateContent=followUp.content,
             waTemplateParams=followUp.placeholders or [],
-            emailSubject=followUp.subject,
-            responseText=followUp.content,
+            emailSubject=apply_contact_placeholders(followUp.subject or "", contact_payload),
+            responseText=response_text,
             nextNode=followUp.step
         )
 
@@ -750,7 +786,9 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
     params = []
     if isinstance(placeholders, list):
         # Extract the 'value' from each placeholder object
-        params = [str(p.get("value", "")) for p in placeholders]
+        for p in placeholders:
+            val = str(p.get("value", ""))
+            params.append(apply_contact_placeholders(val, contact_payload))
 
     next_node_id = node_data.get("nextNode")
     target_label = None
@@ -762,7 +800,7 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
     is_end = next_node_id == "end-call" or target_label == "End Call"
 
     return WhatsAppResponse(
-        responseText=node_data.get("messageContent") or node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"),
+        responseText=apply_contact_placeholders(node_data.get("messageContent") or node_data.get("whatsappTemplateContent") or node_data.get("emailTemplateContent"), contact_payload),
         responseWATemplate=node_data.get("whatsappTemplateId") or node_data.get("emailTemplateId"),
         saveDataVariable=node_data.get("saveToVariable"),
         waTemplateParams=params,
@@ -770,7 +808,7 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
         fileAssetId=node_data.get("sendFileToUserAssetId"),
         nextNode=None if is_end else target_label,
         isEndOfConversation=is_end,
-        emailSubject=node_data.get("emailTemplateSubject")
+        emailSubject=apply_contact_placeholders(node_data.get("emailTemplateSubject"), contact_payload)
     )
 
 
@@ -860,17 +898,17 @@ async def run_agent_endpoint(request: AgentRequest):
                 node_data = node.get("data", {})
                 # Check if we should use the template as reference (LLM) or as a static response
                 if not node_data.get("useTemplateAsReference"):
-                    return generate_static_response(node_data, nodes)
+                    return generate_static_response(node_data, nodes, contact_payload=request.contactPayload)
 
         if last_msg_content == "merakle-signal-unresponsive-user-trigger-follow-up":
             logger.info("Unresponsive user signal detected. Generating follow-up response.")
-            return generate_static_response({}, [], followUp=request.followUp)
+            return generate_static_response({}, [], followUp=request.followUp, contact_payload=request.contactPayload)
 
         if str(last_msg_content).startswith("merakle-signal-reminder-notification-"):
             logger.info(f"Reminder signal detected: {last_msg_content}")
             reminder = next((r for r in request.reminders if r.signal == last_msg_content), None)
             if reminder:
-                return generate_static_response({}, [], reminder=reminder, protocol=protocol)
+                return generate_static_response({}, [], reminder=reminder, protocol=protocol, contact_payload=request.contactPayload)
 
         # Request-scoped tool cache
         tool_cache = {}
@@ -996,6 +1034,17 @@ async def run_agent_endpoint(request: AgentRequest):
             tz_info = request.availability.timezone
             avail_tz = f"- The assistant/system timezone is {tz_info}.\n"
             
+        # Check for contact_location in additional_attributes
+        contact_location = ""
+        if request.contactPayload:
+            attrs = request.contactPayload.get("additional_attributes")
+            if isinstance(attrs, dict):
+                contact_location = attrs.get("contact_location")
+
+        timezone_instruction = f"- The user's timezone by default is assumed to be {tz_info} if not explicitly specified.\n"
+        if contact_location:
+            timezone_instruction = f"- The user is currently located in {contact_location}.\n"
+
         dynamic_context = (
             f"\n----------------------------\n"
             f"\n\nAdditional Context:\n"
@@ -1005,7 +1054,7 @@ async def run_agent_endpoint(request: AgentRequest):
             f"- The current date and time is {now.strftime('%Y-%m-%d %H:%M:%S')}.\n"
             f"- Today is {current_day} and tomorrow is {tomorrow_day}.\n"
             f"{avail_tz}"
-            f"- The user's timezone by default is assumed to be {tz_info} if not explicitly specified.\n"
+            f"{timezone_instruction}"
             f"- Default meeting duration is 30mins, if not explicitly specified.\n"
             #f"- CURRENT NODE: {current_node}.\n"
         )
