@@ -863,6 +863,9 @@ async def run_agent_endpoint(request: AgentRequest):
             if reminder:
                 return generate_static_response({}, [], reminder=reminder, protocol=protocol)
 
+        # Request-scoped tool cache
+        tool_cache = {}
+
         # -------------------------------------------------------
         # 4.1 Handle Workflow Node Routing
         # -------------------------------------------------------
