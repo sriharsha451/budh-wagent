@@ -246,8 +246,26 @@ def is_appointment_available(appointment: AppointmentModel, availability: Option
             logger.debug(f"Match found in slot: {start_dt} to {end_dt}")
             return True, ""
             
-    logger.debug(f"No match found for {utc_dt} in any slot.")
-    return False, f"The requested time {params.date} at {params.time} ({tz_str}) is outside of the available UTC slots. Please check the 'availability' provided in the request context and suggest a different time to the user."
+    # If not available, find suggestions
+    requested_day = utc_dt.date()
+    day_slots = [s for s in slots if s[0].date() == requested_day]
+    
+    suggestion_msg = ""
+    if day_slots:
+        slot_texts = [f"{s[0].strftime('%H:%M')} - {s[1].strftime('%H:%M')} UTC" for s in day_slots]
+        suggestion_msg = f" Available slots on {requested_day} are: " + ", ".join(slot_texts) + "."
+    else:
+        # Find the next available slot in the whole list
+        future_slots = [s for s in slots if s[0] > utc_dt]
+        if future_slots:
+            # Slots are usually sorted, but let's be sure
+            next_slot = min(future_slots, key=lambda x: x[0])
+            suggestion_msg = f" There are no slots on {requested_day}. The next available slot is on {next_slot[0].strftime('%Y-%m-%d')} at {next_slot[0].strftime('%H:%M')} UTC."
+        else:
+            suggestion_msg = " No upcoming available slots were found in the provided availability."
+
+    logger.debug(f"No match found for {utc_dt}. Suggestion: {suggestion_msg}")
+    return False, f"The requested time {params.date} at {params.time} ({tz_str}) is outside of the available UTC slots.{suggestion_msg} Please suggest these available times to the user as per their timezone."
 
 
 async def generate_start_call_variation(response_content: WhatsAppResponse, node_data: Dict[str, Any]) -> None:
