@@ -842,6 +842,7 @@ async def discover_tools_endpoint():
 
 @app.post("/wa-agent", response_model=WhatsAppResponse)
 async def run_agent_endpoint(request: AgentRequest):
+    print(f"DEBUG: Incoming AgentRequest: {request.model_dump_json(indent=2)}")
 
     try:
         task_id = str(request.taskId)
