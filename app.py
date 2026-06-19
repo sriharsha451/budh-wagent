@@ -2,7 +2,7 @@ import os
 import httpx
 import uuid
 import json
-from typing import List, Any, Dict, Optional, Literal
+from typing import List, Any, Dict, Optional, Literal, Tuple
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException
 from agno.agent import Agent
@@ -898,6 +898,91 @@ async def discover_tools_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def check_email_bounce_or_ooo(last_msg_content: Optional[str]) -> Tuple[bool, Optional[str]]:
+    """
+    Checks if the email body represents a bounce (non-delivery report) or an out-of-office autoreply.
+    Returns:
+        (is_bounce_or_ooo, detection_type)
+        where detection_type is 'bounce', 'ooo', or None.
+    """
+    if not last_msg_content:
+        return False, None
+
+    body = re.sub(r"\s+", " ", str(last_msg_content).lower())
+
+    bounce_keywords = [
+        # Generic NDRs
+        "message not delivered",
+        "couldn't be delivered",
+        "could not be delivered",
+        "delivery has failed",
+        "mail delivery failed",
+        "delivery failure",
+        "undelivered",
+        "returned mail",
+        "rejected your message",
+        "remote server returned",
+
+        # Invalid recipient/domain
+        "address not found",
+        "recipient not found",
+        "user unknown",
+        "unknown to address",
+        "does not exist",
+        "domain does not exist",
+        "mailbox unavailable",
+        "recipient address rejected",
+        "email address couldn't be found",
+        "email address you entered couldn't be found",
+        "the email account that you tried to reach does not exist",
+
+        # Mail server generated reports
+        "the mail system",
+        "for further assistance, please send mail to postmaster",
+        "one or more recipients",
+
+        # Spam / policy / blacklist
+        "suspected of being spam",
+        "blacklisted",
+        "blocked",
+        "message rejected",
+        "service unavailable",
+
+        # SMTP errors
+        "550 ",
+        "551 ",
+        "552 ",
+        "553 ",
+        "554 "
+    ]
+
+    ooo_keywords = [
+        "out of office",
+        "automatic reply",
+        "autoreply",
+        "auto-reply",
+        "on vacation",
+        "on leave",
+        "away from email",
+        "away from the office",
+        "currently out of the office",
+        "limited access to email",
+        "will respond upon my return",
+        "i am currently unavailable",
+        "i am away"
+    ]
+
+    is_bounce = any(keyword in body for keyword in bounce_keywords)
+    is_ooo = sum(keyword in body for keyword in ooo_keywords) >= 2
+
+    if is_bounce:
+        return True, "bounce"
+    if is_ooo:
+        return True, "ooo"
+
+    return False, None
+
+
 @app.post("/wa-agent", response_model=WhatsAppResponse)
 async def run_agent_endpoint(request: AgentRequest):
     print(f"DEBUG: Incoming AgentRequest: {request.model_dump_json(indent=2)}")
@@ -915,6 +1000,19 @@ async def run_agent_endpoint(request: AgentRequest):
         ts = request.templateSettings
         campaign_settings = ts.get("campaign_settings", {})
         protocol = str(request.protocol or ts.get("protocol") or campaign_settings.get("protocol") or "WHATSAPP")
+
+        if protocol.upper() == "EMAIL":
+            is_detected, detection_type = check_email_bounce_or_ooo(last_msg_content)
+            if is_detected:
+                if detection_type == "bounce":
+                    logger.info("Bounce/non-delivery email detected. Triggering static response.")
+                else:
+                    logger.info("Out-of-office auto-response detected. Triggering static response.")
+                
+                response = generate_static_response({}, [], contact_payload=request.contactPayload, protocol=protocol)
+                response.responseText = ""
+                response.isEndOfConversation = True
+                return response
 
         if last_msg_content == "merakle-signal-start-conversation-message":
             logger.info("Start conversation signal detected. Using static response generator for 'Start Call' node.")
