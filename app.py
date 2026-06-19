@@ -898,6 +898,93 @@ async def discover_tools_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def generate_email_template_variation(
+    node_data: Dict[str, Any],
+    nodes: List[Dict[str, Any]],
+    contact_payload: Optional[Dict[str, Any]]
+) -> WhatsAppResponse:
+    """
+    Generates a rewritten variation of the email template using gpt-4o-mini
+    when useTemplateAsReference is True.
+    """
+    template_id = node_data.get("emailTemplateId") or node_data.get("whatsappTemplateId") or ""
+    subject = node_data.get("emailTemplateSubject") or ""
+    body = node_data.get("emailTemplateContent") or node_data.get("whatsappTemplateContent") or ""
+            
+    SYSTEM_PROMPT = """
+You are an expert email copywriter.
+
+Given an email subject and body, generate a rewritten variation that preserves the original intent, message, tone, and call-to-action.
+
+Requirements:
+- Rewrite both the subject and the body.
+- Use different wording and sentence structure to make it distinct.
+- Preserve all placeholders (e.g. {{contact_first_name}}, {{your_name}}, {{1}}, {{2}}) exactly as they are in the original. Do not modify, rename, or create new placeholders.
+- Preserve all important facts, claims, dates, numbers, links, and variables.
+- Preserve HTML formatting when present.
+- Keep the overall length similar to the original.
+- Maintain the same professional tone and objective.
+
+EMAIL OUTPUT (subject and body) FORMAT (STRICT HTML RULES):
+- Respond ONLY in clean HTML format inside the JSON object
+- Do NOT include <html>, <head>, or <body> tags
+- Use ONLY these tags: <p>, <br>, <strong>, <em>, <ul>, <li>
+- DO NOT use: <div>, <span>, <font>, or any other tags
+- DO NOT use inline styles, CSS, classes, or font-family declarations
+- Each paragraph must be wrapped in a <p> tag
+- Use <br> only for line breaks inside paragraphs (e.g., signature)
+- Keep spacing natural using separate <p> tags (no &nbsp;)
+
+You MUST respond ONLY with a raw JSON object matching the JSON structure:
+{
+  "subject": "<rewritten subject>",
+  "body": "<rewritten body, preserving line breaks, HTML tags, and placeholders>"
+}
+"""
+
+    user_prompt = f"""
+Original Email:
+
+SUBJECT:
+{subject}
+
+BODY:
+{body}
+"""
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    api_response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.9,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
+        ]
+    )
+    llm_output = api_response.choices[0].message.content.strip()
+    logger.info(f"LLM Variation output: {llm_output}")
+    
+    # Parse the JSON output
+    try:
+        parsed = json.loads(llm_output)
+    except Exception as e:
+        logger.error(f"Failed to parse LLM JSON output: {e}")
+        parsed = {}
+        
+    res_subject = parsed.get("subject") or subject
+    res_content = parsed.get("body") or parsed.get("content") or body
+        
+    response = generate_static_response(node_data, nodes, contact_payload=contact_payload)
+    response.responseWATemplate = template_id
+    response.waTemplateContent = res_content
+    response.responseText = res_content
+    response.emailSubject = res_subject
+    
+    return response
+
+
 def check_email_bounce_or_ooo(last_msg_content: Optional[str]) -> Tuple[bool, Optional[str]]:
     """
     Checks if the email body represents a bounce (non-delivery report) or an out-of-office autoreply.
@@ -1015,7 +1102,7 @@ async def run_agent_endpoint(request: AgentRequest):
                 return response
 
         if last_msg_content == "merakle-signal-start-conversation-message":
-            logger.info("Start conversation signal detected. Using static response generator for 'Start Call' node.")
+            logger.info("Start conversation signal detected. Processing 'Start Call' node.")
             workflow = request.callWorkflow or {}
             nodes = workflow.get("nodes", [])
             node = next((n for n in nodes if str(n.get("data", {}).get("label")) == "Start Call"), None)
@@ -1024,6 +1111,9 @@ async def run_agent_endpoint(request: AgentRequest):
                 # Check if we should use the template as reference (LLM) or as a static response
                 if not node_data.get("useTemplateAsReference"):
                     return generate_static_response(node_data, nodes, contact_payload=request.contactPayload)
+                else:
+                    # useTemplateAsReference is True, generate variation using gpt-4o-mini
+                    return await generate_email_template_variation(node_data, nodes, request.contactPayload)
 
         if last_msg_content == "merakle-signal-unresponsive-user-trigger-follow-up":
             logger.info("Unresponsive user signal detected. Generating follow-up response.")
