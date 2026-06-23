@@ -1040,7 +1040,13 @@ def check_email_bounce_or_ooo(last_msg_content: Optional[str]) -> Tuple[bool, Op
         "551 ",
         "552 ",
         "553 ",
-        "554 "
+        "554 ",
+
+        # Recipient no longer with company
+        "no longer with",
+        "no longer employed",
+        "left the company",
+        "no longer works"
     ]
 
     ooo_keywords = [
@@ -1050,6 +1056,10 @@ def check_email_bounce_or_ooo(last_msg_content: Optional[str]) -> Tuple[bool, Op
         "auto-reply",
         "on vacation",
         "on leave",
+        "on personal leave",
+        "personal leave",
+        "expect delay",
+        "delay in response",
         "away from email",
         "away from the office",
         "currently out of the office",
