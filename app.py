@@ -733,7 +733,7 @@ class AgentRequest(BaseModel):
 # 1.2. Static Response Generator
 # -------------------------------------------------------
 
-def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None, reminder: Optional[ReminderModel] = None, protocol: str = "WHATSAPP", contact_payload: Optional[Dict[str, Any]] = None) -> WhatsAppResponse:
+def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None, reminder: Optional[ReminderModel] = None, protocol: str = "WHATSAPP", contact_payload: Optional[Dict[str, Any]] = None, chat_history: Optional[List[Dict[str, Any]]] = None) -> WhatsAppResponse:
     """
     Generates a WhatsAppResponse directly from node data, followUp, or reminder object without LLM intervention.
     """
@@ -1109,6 +1109,13 @@ async def run_agent_endpoint(request: AgentRequest):
                 response = generate_static_response({}, [], contact_payload=request.contactPayload, protocol=protocol)
                 response.responseText = ""
                 response.isEndOfConversation = True
+                response.userInterestLevel = InterestLevelModel(
+                    classification="UNSUBSCRIBE",
+                    confidence=1.0,
+                    reason=f"Automated email {detection_type} detected.",
+                    unsubscribe_detected=True,
+                    do_not_contact=True
+                )
                 return response
 
         if last_msg_content == "merakle-signal-start-conversation-message":
@@ -1127,7 +1134,7 @@ async def run_agent_endpoint(request: AgentRequest):
 
         if last_msg_content == "merakle-signal-unresponsive-user-trigger-follow-up":
             logger.info("Unresponsive user signal detected. Generating follow-up response.")
-            return generate_static_response({}, [], followUp=request.followUp, contact_payload=request.contactPayload)
+            return generate_static_response({}, [], followUp=request.followUp, contact_payload=request.contactPayload, chat_history=request.chatHistory)
 
         if str(last_msg_content).startswith("merakle-signal-reminder-notification-"):
             logger.info(f"Reminder signal detected: {last_msg_content}")
