@@ -1364,13 +1364,18 @@ async def run_agent_endpoint(request: AgentRequest):
         # -------------------------------------------------------
 
         if final_validated_output:
+            if hasattr(final_validated_output, "emailSubject"):
+                final_validated_output.emailSubject = None
+            elif isinstance(final_validated_output, dict):
+                final_validated_output["emailSubject"] = None
             print(f"DEBUG: RETURNED BACK OUPUT: {final_validated_output.model_dump_json(indent=2)}")
             return final_validated_output
 
         # Final fallback if loop fails
         return WhatsAppResponse(
             responseText=str(response.content),
-            isEndOfConversation=False
+            isEndOfConversation=False,
+            emailSubject=None
         )
 
     except Exception as e:
