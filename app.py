@@ -733,7 +733,16 @@ class AgentRequest(BaseModel):
 # 1.2. Static Response Generator
 # -------------------------------------------------------
 
-def generate_static_response(node_data: dict, nodes: list, followUp: Optional[FollowUpModel] = None, reminder: Optional[ReminderModel] = None, protocol: str = "WHATSAPP", contact_payload: Optional[Dict[str, Any]] = None, chat_history: Optional[List[Dict[str, Any]]] = None) -> WhatsAppResponse:
+def generate_static_response(
+    node_data: dict, 
+    nodes: list, 
+    followUp: Optional[FollowUpModel] = None, 
+    reminder: Optional[ReminderModel] = None, 
+    protocol: str = "WHATSAPP", 
+    contact_payload: Optional[Dict[str, Any]] = None, 
+    chat_history: Optional[List[Dict[str, Any]]] = None,
+    template_settings: Optional[Dict[str, Any]] = None
+) -> WhatsAppResponse:
     """
     Generates a WhatsAppResponse directly from node data, followUp, or reminder object without LLM intervention.
     """
@@ -758,24 +767,47 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
         
         return text
 
+    # Determine emailSubject based on the rules:
+    # 1) If intro message (Start Call) and protocol = EMAIL -> set emailSubject
+    # 2) If completed_bdr_angles_count > 0 and step = 1 and is followup message and protocol = EMAIL -> set emailSubject
+    # 3) Otherwise, do not set emailSubject (set to None)
+    
+    subject = None
+    completed_bdr_angles_count = 0
+    if template_settings:
+        completed_bdr_angles_count = template_settings.get("completed_bdr_angles_count") or 0
+        
+    is_email = (protocol.upper() == "EMAIL")
+    
+    if is_email:
+        # Check Condition 1: Intro Message
+        if node_data and (node_data.get("label") == "Start Call") and (followUp is None) and (reminder is None):
+            subject = apply_contact_placeholders(node_data.get("emailTemplateSubject"), contact_payload)
+            
+        # Check Condition 2: Follow-up Message
+        elif followUp is not None:
+            step_val = str(followUp.step).strip() if followUp.step is not None else ""
+            if (completed_bdr_angles_count > 0) and (step_val == "1"):
+                subject = apply_contact_placeholders(followUp.subject or "", contact_payload)
+
     if reminder:
         if protocol.upper() in ["WEB", "EMAIL"]:
-            subject = reminder.emailSubject or ""
+            rem_subject = reminder.emailSubject or ""
             body = reminder.emailBody or ""
             
             # 1. First apply index-based replacements from reminder.placeholders
             for i, p_dict in enumerate(reminder.placeholders):
                 val = p_dict.get("value", "")
                 placeholder = f"{{{{{i+1}}}}}"
-                subject = subject.replace(placeholder, str(val))
+                rem_subject = rem_subject.replace(placeholder, str(val))
                 body = body.replace(placeholder, str(val))
             
             # 2. Then apply contact-based replacements
-            subject = apply_contact_placeholders(subject, contact_payload)
+            rem_subject = apply_contact_placeholders(rem_subject, contact_payload)
             body = apply_contact_placeholders(body, contact_payload)
             
             return WhatsAppResponse(
-                emailSubject=subject,
+                emailSubject=rem_subject,
                 responseText=body,
                 responseWATemplate=None
             )
@@ -800,7 +832,7 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
             responseWATemplate=followUp.templateId,
             waTemplateContent=followUp.content,
             waTemplateParams=followUp.placeholders or [],
-            emailSubject=apply_contact_placeholders(followUp.subject or "", contact_payload),
+            emailSubject=subject,
             responseText=response_text,
             nextNode=followUp.step
         )
@@ -835,7 +867,7 @@ def generate_static_response(node_data: dict, nodes: list, followUp: Optional[Fo
         fileAssetId=node_data.get("sendFileToUserAssetId"),
         nextNode=None if is_end else target_label,
         isEndOfConversation=is_end,
-        emailSubject=apply_contact_placeholders(node_data.get("emailTemplateSubject"), contact_payload)
+        emailSubject=subject
     )
 
 
@@ -1106,7 +1138,7 @@ async def run_agent_endpoint(request: AgentRequest):
                 else:
                     logger.info("Out-of-office auto-response detected. Triggering static response.")
                 
-                response = generate_static_response({}, [], contact_payload=request.contactPayload, protocol=protocol)
+                response = generate_static_response({}, [], contact_payload=request.contactPayload, protocol=protocol, template_settings=ts)
                 response.responseText = ""
                 response.isEndOfConversation = True
                 response.userInterestLevel = InterestLevelModel(
@@ -1127,20 +1159,20 @@ async def run_agent_endpoint(request: AgentRequest):
                 node_data = node.get("data", {})
                 # Check if we should use the template as reference (LLM) or as a static response
                 if not node_data.get("useTemplateAsReference"):
-                    return generate_static_response(node_data, nodes, contact_payload=request.contactPayload)
+                    return generate_static_response(node_data, nodes, contact_payload=request.contactPayload, protocol=protocol, template_settings=ts)
                 else:
                     # useTemplateAsReference is True, generate variation using gpt-4o-mini
                     return await generate_email_template_variation(node_data, nodes, request.contactPayload)
 
         if last_msg_content == "merakle-signal-unresponsive-user-trigger-follow-up":
             logger.info("Unresponsive user signal detected. Generating follow-up response.")
-            return generate_static_response({}, [], followUp=request.followUp, contact_payload=request.contactPayload, chat_history=request.chatHistory)
+            return generate_static_response({}, [], followUp=request.followUp, contact_payload=request.contactPayload, chat_history=request.chatHistory, protocol=protocol, template_settings=ts)
 
         if str(last_msg_content).startswith("merakle-signal-reminder-notification-"):
             logger.info(f"Reminder signal detected: {last_msg_content}")
             reminder = next((r for r in request.reminders if r.signal == last_msg_content), None)
             if reminder:
-                return generate_static_response({}, [], reminder=reminder, protocol=protocol, contact_payload=request.contactPayload)
+                return generate_static_response({}, [], reminder=reminder, protocol=protocol, contact_payload=request.contactPayload, template_settings=ts)
 
         # Request-scoped tool cache
         tool_cache = {}
